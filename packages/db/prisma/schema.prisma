@@ -1,0 +1,106 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+model Organization {
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  plan             Plan     @default(FREE)
+  stripeCustomerId String?  @map("stripe_customer_id")
+  featureFlags     Json     @default("{}") @map("feature_flags")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  users         User[]
+  apiKeys       ApiKey[]
+  usageRecords  UsageRecord[]
+  semanticCache SemanticCacheEntry[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(MEMBER)
+  orgId        String   @map("org_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("users")
+}
+
+model ApiKey {
+  id           String    @id @default(uuid()) @db.Uuid
+  orgId        String    @map("org_id") @db.Uuid
+  keyHash      String    @unique @map("key_hash")
+  keyPrefix    String    @map("key_prefix")
+  scopes       String[]
+  isActive     Boolean   @default(true) @map("is_active")
+  rateLimitRpm Int       @default(60) @map("rate_limit_rpm")
+  lastUsedAt   DateTime? @map("last_used_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  usageRecords UsageRecord[]
+
+  @@index([orgId])
+  @@map("api_keys")
+}
+
+model UsageRecord {
+  id               String   @id @default(uuid()) @db.Uuid
+  orgId            String   @map("org_id") @db.Uuid
+  apiKeyId         String   @map("api_key_id") @db.Uuid
+  model            String
+  promptTokens     Int      @map("prompt_tokens")
+  completionTokens Int      @map("completion_tokens")
+  costUsd          Decimal  @map("cost_usd") @db.Decimal(12, 6)
+  requestId        String   @unique @map("request_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey       @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@map("usage_records")
+}
+
+model SemanticCacheEntry {
+  id         String                   @id @default(uuid()) @db.Uuid
+  orgId      String                   @map("org_id") @db.Uuid
+  promptHash String                   @map("prompt_hash")
+  // vector(1536): column + ivfflat index are created via raw SQL in the
+  // RLS/pgvector migration, since Prisma has no native vector column type.
+  embedding  Unsupported("vector(1536)")?
+  response   String
+  createdAt  DateTime                 @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId])
+  @@map("semantic_cache")
+}
