@@ -4,9 +4,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "outDir": "dist"
   },
-  "include": ["prisma/**/*.ts", "src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

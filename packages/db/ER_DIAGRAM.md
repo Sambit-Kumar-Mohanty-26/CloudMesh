@@ -68,7 +68,7 @@ erDiagram
   billing event hits a constraint violation instead of double-charging an org.
 - **Row-Level Security**: `api_keys`, `usage_records`, and `semantic_cache` have
   `FORCE ROW LEVEL SECURITY` with a `tenant_isolation` policy on `org_id =
-  current_setting('app.current_org')`. Verified against a live DB
+current_setting('app.current_org')`. Verified against a live DB
   (`packages/db/prisma/migrations/20260715085500_rls_and_pgvector`,
   `20260715090000_app_role`): a session with no org set, or the wrong org set,
   sees 0 rows; the correct org sees its own rows. RLS only holds because the

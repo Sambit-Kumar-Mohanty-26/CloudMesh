@@ -5,5 +5,27 @@
   "workspaces": [
     "packages/*",
     "apps/*"
-  ]
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace=@cloudmesh/api",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:migrate": "npm run migrate:dev --workspace=@cloudmesh/db",
+    "db:seed": "npm run seed --workspace=@cloudmesh/db",
+    "db:studio": "npm run studio --workspace=@cloudmesh/db"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^9.1.2",
+    "prettier": "^3.9.5",
+    "typescript-eslint": "^8.64.0"
+  }
 }

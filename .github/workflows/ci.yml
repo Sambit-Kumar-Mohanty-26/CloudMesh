@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Lint, format, typecheck, audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Typecheck needs @prisma/client's generated types, which are
+      # schema-driven only — no live DB connection required for this step.
+      - run: npm run generate --workspace=@cloudmesh/db
+
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+
+      # Scoped to runtime dependencies on purpose: dev tooling (vitest's
+      # esbuild/vite chain) currently carries known advisories in code paths
+      # this project never runs (a dev server we don't start). Blocking CI
+      # on those would be noise, not signal — see CLAUDE.md. Anything that
+      # actually ships is held to a hard gate.
+      - run: npm audit --omit=dev --audit-level=high
+
+  test:
+    name: Test (real Postgres + Redis)
+    runs-on: ubuntu-latest
+    env:
+      # Superuser connection, used only to apply migrations here — mirrors
+      # docker-compose.yml exactly so local and CI behavior match.
+      DATABASE_URL: postgresql://cloudmesh:cloudmesh@localhost:55432/cloudmesh
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: cloudmesh
+          POSTGRES_PASSWORD: cloudmesh
+          POSTGRES_DB: cloudmesh
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U cloudmesh"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # migrate:deploy (not migrate:dev) — applies existing migrations
+      # non-interactively, never generates a new one. This is also what
+      # creates the RLS policies, the pgvector extension/index, and the
+      # non-superuser cloudmesh_app role that the tests connect as.
+      - run: npm run migrate:deploy --workspace=@cloudmesh/db
+
+      - run: npm run generate --workspace=@cloudmesh/db
+
+      # apps/api's vitest.config.ts hardcodes its own test env (matching
+      # these exact service ports/credentials) — nothing further to pass
+      # in here.
+      - run: npm test --workspace=@cloudmesh/api
