@@ -91,7 +91,10 @@ jobs:
 
       - run: npm run generate --workspace=@cloudmesh/db
 
-      # apps/api's vitest.config.ts hardcodes its own test env (matching
-      # these exact service ports/credentials) — nothing further to pass
-      # in here.
+      # Each service's vitest.config.ts hardcodes its own test env
+      # (matching these exact service ports/credentials) — nothing further
+      # to pass in here. packages/auth's tests are pure (no DB/Redis) but
+      # run alongside these for one consolidated report.
+      - run: npm test --workspace=@cloudmesh/auth
       - run: npm test --workspace=@cloudmesh/api
+      - run: npm test --workspace=@cloudmesh/gateway

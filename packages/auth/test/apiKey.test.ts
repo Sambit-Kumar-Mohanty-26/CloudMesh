@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateApiKey, hashApiKey } from "../../src/lib/apiKey.js";
+import { generateApiKey, hashApiKey } from "../src/apiKey.js";
 
 describe("generateApiKey", () => {
   it("generates keys with the expected prefix", () => {

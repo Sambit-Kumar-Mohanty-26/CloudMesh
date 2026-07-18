@@ -11,12 +11,8 @@ try {
   process.exit(1);
 }
 
-// In production this runs behind an orchestrator (k8s, ECS, ...) that sends
-// SIGTERM before killing the process — app.close() drains Fastify (redis
-// disconnects via its own onClose hook, in-flight requests finish), then
-// disconnectAll() tears down the shared Prisma singleton. That order
-// matters: disconnecting Prisma is a true process-shutdown action, not
-// something any individual Fastify instance owns — see plugins/db.ts.
+// See apps/api/src/server.ts for why disconnectAll() happens here, after
+// app.close(), rather than in plugins/db.ts's onClose hook.
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => {
     app.log.info({ signal }, "shutting down");

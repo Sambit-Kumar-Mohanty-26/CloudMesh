@@ -1,8 +1,7 @@
+import { apiKeyCacheKey, generateApiKey, hashApiKey } from "@cloudmesh/auth";
 import { Prisma, withTenant, type PrismaClient } from "@cloudmesh/db";
 import type { Redis } from "ioredis";
 import { NotFoundError } from "../../errors.js";
-import { generateApiKey, hashApiKey } from "../../lib/apiKey.js";
-import { apiKeyCacheKey } from "../../middleware/requireApiKey.js";
 
 export interface ApiKeyDeps {
   db: PrismaClient;

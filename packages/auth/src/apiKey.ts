@@ -10,3 +10,7 @@ export function generateApiKey(): { rawKey: string; keyPrefix: string } {
 export function hashApiKey(rawKey: string): string {
   return createHash("sha256").update(rawKey).digest("hex");
 }
+
+export function apiKeyCacheKey(keyHash: string): string {
+  return `auth:${keyHash}`;
+}

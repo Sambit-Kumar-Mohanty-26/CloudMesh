@@ -16,9 +16,8 @@ function extractToken(request: FastifyRequest): string | undefined {
 }
 
 /**
- * Thin Fastify glue around the shared resolveApiKey() in @cloudmesh/auth —
- * see that package for the actual extract->hash->redis->db->attach chain,
- * which is identical for this service and apps/gateway.
+ * Identical chain to apps/api's requireApiKey — both are thin Fastify glue
+ * around the shared resolveApiKey() in @cloudmesh/auth.
  */
 export async function requireApiKey(request: FastifyRequest): Promise<void> {
   const rawKey = extractToken(request);

@@ -7,9 +7,11 @@ individual apps don't reimplement that plumbing.
 ## Repo layout
 
 ```
-apps/api/       Fastify service: auth, API key management
-packages/db/     Prisma schema, migrations, shared DB client
-notes/          Original project spec (read-only reference)
+apps/api/        Fastify service: auth, API key management
+apps/gateway/     Fastify service: unified /v1/chat across providers, streaming, idempotency
+packages/db/      Prisma schema, migrations, shared DB client
+packages/auth/    Shared API-key auth (resolveApiKey) used by both apps/*
+notes/           Original project spec (read-only reference)
 ```
 
 ## Prerequisites
@@ -32,19 +34,25 @@ npm run db:migrate
 npm run db:seed
 ```
 
-Copy the env examples and fill in a real `JWT_SECRET` (32+ chars) for
-`apps/api`:
+Copy the env examples. `apps/api` needs a real `JWT_SECRET` (32+ chars);
+`apps/gateway` needs at least one provider key to call a real LLM, or set
+`ENABLE_MOCK_PROVIDER=true` to exercise the gateway with a canned
+no-network `mock-echo` model instead:
 
 ```bash
 cp apps/api/.env.example apps/api/.env
+cp apps/gateway/.env.example apps/gateway/.env
 cp packages/db/.env.example packages/db/.env
 ```
 
-## Running the API
+## Running the services
 
 ```bash
 npm run dev          # apps/api on :3000, with reload
 curl http://localhost:3000/health
+
+npm run dev --workspace=@cloudmesh/gateway   # apps/gateway on :3001
+curl http://localhost:3001/health
 ```
 
 ## Testing
