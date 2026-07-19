@@ -17,6 +17,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.setErrorHandler((err, request, reply) => {
     if (err instanceof AppError) {
+      if (err.headers) reply.headers(err.headers);
       reply.code(err.statusCode).send({ error: err.message, code: err.code });
       return;
     }

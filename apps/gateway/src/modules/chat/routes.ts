@@ -4,6 +4,7 @@ import { env } from "../../env.js";
 import { ProviderError, ValidationError } from "../../errors.js";
 import { getIdempotentReplay, storeIdempotentResult } from "../../lib/idempotency.js";
 import { requireApiKey } from "../../middleware/requireApiKey.js";
+import { requireRateLimit } from "../../middleware/requireRateLimit.js";
 import type { UnifiedChatChunk, UnifiedChatResponse } from "../../providers/types.js";
 import { chatRequestSchema } from "./schemas.js";
 
@@ -38,7 +39,9 @@ function writeSSE(reply: FastifyReply, payload: unknown): void {
 export default async function chatRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", requireApiKey);
 
-  fastify.post("/v1/chat", async (request, reply) => {
+  // Rate limiting only on the expensive, provider-cost-incurring route —
+  // GET /v1/models is cheap/cached and doesn't need the same protection.
+  fastify.post("/v1/chat", { preHandler: requireRateLimit }, async (request, reply) => {
     let input;
     try {
       input = chatRequestSchema.parse(request.body);

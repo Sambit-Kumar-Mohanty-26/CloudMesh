@@ -94,7 +94,9 @@ jobs:
       # Each service's vitest.config.ts hardcodes its own test env
       # (matching these exact service ports/credentials) — nothing further
       # to pass in here. packages/auth's tests are pure (no DB/Redis) but
-      # run alongside these for one consolidated report.
+      # run alongside these for one consolidated report. packages/rate-
+      # limiter needs Redis only — it reads REDIS_URL itself.
       - run: npm test --workspace=@cloudmesh/auth
+      - run: npm test --workspace=@cloudmesh/rate-limiter
       - run: npm test --workspace=@cloudmesh/api
       - run: npm test --workspace=@cloudmesh/gateway

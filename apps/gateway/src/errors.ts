@@ -3,6 +3,9 @@ export class AppError extends Error {
     public readonly statusCode: number,
     message: string,
     public readonly code: string,
+    /** Extra response headers the error handler should set — e.g.
+     *  Retry-After on a 429. Optional; most error types don't need this. */
+    public readonly headers?: Record<string, string>,
   ) {
     super(message);
     this.name = "AppError";
@@ -34,5 +37,13 @@ export class ProviderError extends AppError {
     public readonly provider: string,
   ) {
     super(502, message, "PROVIDER_ERROR");
+  }
+}
+
+export class RateLimitError extends AppError {
+  constructor(retryAfterSeconds: number) {
+    super(429, "Rate limit exceeded", "RATE_LIMITED", {
+      "Retry-After": String(Math.max(1, Math.ceil(retryAfterSeconds))),
+    });
   }
 }

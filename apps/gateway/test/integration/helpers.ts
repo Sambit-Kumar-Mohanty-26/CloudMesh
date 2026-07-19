@@ -19,6 +19,7 @@ export async function resetAll(app: FastifyInstance): Promise<void> {
  *  to a valid, authenticated org rather than going through HTTP. */
 export async function createTestApiKey(
   orgName = "Gateway Test Org",
+  rateLimitRpm = 60,
 ): Promise<{ rawKey: string; orgId: string }> {
   const db = getAdminPrisma();
   const org = await db.organization.create({ data: { name: orgName } });
@@ -29,7 +30,7 @@ export async function createTestApiKey(
       keyHash: hashApiKey(rawKey),
       keyPrefix: rawKey.slice(0, 12),
       scopes: ["chat:read", "chat:write"],
-      rateLimitRpm: 60,
+      rateLimitRpm,
     },
   });
   return { rawKey, orgId: org.id };
