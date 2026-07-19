@@ -1,0 +1,42 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, independent of any push - catches new vulnerability patterns
+    # CodeQL's own rule set learns about after this code was last touched.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      # security-events:write is what lets this job publish findings to the
+      # repo's Security tab - narrower permissions would run but be mute.
+      security-events: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+
+      # No manual build step: the JS/TS extractor scans source directly,
+      # it doesn't need `npm run build`/`tsc` output.
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"
