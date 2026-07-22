@@ -7,12 +7,14 @@ individual apps don't reimplement that plumbing.
 ## Repo layout
 
 ```
-apps/api/            Fastify service: auth, API key management
-apps/gateway/         Fastify service: unified /v1/chat across providers, streaming, idempotency, rate limiting
-packages/db/           Prisma schema, migrations, shared DB client
-packages/auth/          Shared API-key auth (resolveApiKey) used by both apps/*
-packages/rate-limiter/   4 distributed rate-limiting algorithms (Redis + Lua), used by apps/gateway
-notes/                    Original project spec (read-only reference)
+apps/api/                 Fastify service: auth, API key management
+apps/gateway/              Fastify service: unified /v1/chat across providers — streaming,
+                             idempotency, rate limiting, circuit breaker + retry, fallback
+packages/db/                Prisma schema, migrations, shared DB client
+packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
+packages/rate-limiter/        4 distributed rate-limiting algorithms (Redis + Lua)
+packages/circuit-breaker/      Circuit breaker (3-state, Redis + Lua) + backoff retry
+notes/                          Original project spec (read-only reference)
 ```
 
 ## Prerequisites

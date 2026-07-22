@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { env } from "../../env.js";
-import { ProviderError, ValidationError } from "../../errors.js";
+import { ProviderError, ServiceUnavailableError, ValidationError } from "../../errors.js";
 import { getIdempotentReplay, storeIdempotentResult } from "../../lib/idempotency.js";
+import { callProviderResilient } from "../../lib/resilience.js";
+import { resolveModelWithFallback } from "../../lib/resolveModel.js";
 import { requireApiKey } from "../../middleware/requireApiKey.js";
 import { requireRateLimit } from "../../middleware/requireRateLimit.js";
 import type { UnifiedChatChunk, UnifiedChatResponse } from "../../providers/types.js";
@@ -36,6 +38,16 @@ function writeSSE(reply: FastifyReply, payload: unknown): void {
   reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+/** Shared shape for the "provider/circuit failed before anything streamed"
+ *  responses, on both the streaming and non-streaming paths. */
+function providerFailureBody(err: ProviderError | ServiceUnavailableError) {
+  return {
+    error: err.message,
+    code: err.code,
+    ...(err instanceof ProviderError ? { provider: err.provider } : {}),
+  };
+}
+
 export default async function chatRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", requireApiKey);
 
@@ -65,10 +77,14 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       }
     }
 
-    const resolved = request.server.models.resolve(input.model);
-    if (!resolved) {
-      throw new ValidationError(`Unknown model: ${input.model}`);
-    }
+    // Throws ValidationError (unknown model) or AllProvidersUnavailableError
+    // (auto, every candidate's circuit open) — both AppError subclasses,
+    // handled generically by app.ts's error handler.
+    const resolved = await resolveModelWithFallback(
+      request.server.models,
+      request.server.redis,
+      input.model,
+    );
 
     const providerReq = {
       model: resolved.providerModel,
@@ -81,11 +97,14 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     if (!input.stream) {
       let response: UnifiedChatResponse;
       try {
-        response = await resolved.provider.chat(providerReq);
+        response = await callProviderResilient(request.server.redis, resolved.provider.name, () =>
+          resolved.provider.chat(providerReq),
+        );
       } catch (err) {
-        if (err instanceof ProviderError) {
-          reply.code(502);
-          return { error: err.message, code: err.code, provider: err.provider };
+        if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
+          if (err.headers) reply.headers(err.headers);
+          reply.code(err.statusCode);
+          return providerFailureBody(err);
         }
         throw err;
       }
@@ -103,17 +122,30 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     }
 
     // Streaming: pull the first chunk BEFORE committing to SSE headers, so
-    // an immediate provider error (bad key, connection refused, 4xx) still
-    // comes back as an ordinary 502 JSON response instead of a half-open
-    // stream the client has no clean way to detect as failed.
-    const iterator = resolved.provider.chatStream(providerReq)[Symbol.asyncIterator]();
+    // an immediate provider/circuit failure still comes back as an
+    // ordinary JSON error instead of a half-open stream the client has no
+    // clean way to detect as failed. Each retry attempt (inside
+    // callProviderResilient) opens a BRAND NEW chatStream() call — reusing
+    // one iterator across retries wouldn't work, since a generator that's
+    // already thrown is done, not resumable.
     let first: IteratorResult<UnifiedChatChunk>;
+    let iterator: AsyncIterator<UnifiedChatChunk>;
     try {
-      first = await iterator.next();
+      const attempt = await callProviderResilient(
+        request.server.redis,
+        resolved.provider.name,
+        async () => {
+          const it = resolved.provider.chatStream(providerReq)[Symbol.asyncIterator]();
+          return { it, result: await it.next() };
+        },
+      );
+      iterator = attempt.it;
+      first = attempt.result;
     } catch (err) {
-      if (err instanceof ProviderError) {
-        reply.code(502);
-        return { error: err.message, code: err.code, provider: err.provider };
+      if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
+        if (err.headers) reply.headers(err.headers);
+        reply.code(err.statusCode);
+        return providerFailureBody(err);
       }
       throw err;
     }

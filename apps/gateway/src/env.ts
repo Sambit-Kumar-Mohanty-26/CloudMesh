@@ -36,9 +36,35 @@ const schema = z.object({
     .positive()
     .default(60 * 60 * 24),
 
-  // What model:"auto" resolves to until Phase 4's real routing engine
-  // exists. Must name a model some enabled provider actually serves.
+  // What model:"auto" resolves to until a real Intelligent Routing Engine
+  // exists (not yet built as of Phase 5). Must name a model some enabled
+  // provider actually serves.
   DEFAULT_MODEL: z.string().default("gpt-4o-mini"),
+
+  // Comma-separated models tried, in order, if DEFAULT_MODEL's provider
+  // circuit is open — only applies to "auto"; an explicit model request
+  // never gets silently swapped for a different model. Empty by default:
+  // fallback is opt-in, since it only makes sense once more than one
+  // provider is actually configured.
+  AUTO_FALLBACK_MODELS: z
+    .string()
+    .default("")
+    .transform((s) =>
+      s
+        .split(",")
+        .map((m) => m.trim())
+        .filter(Boolean),
+    ),
+
+  // Circuit breaker (Phase 5) — per provider, not global.
+  CIRCUIT_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(5),
+  CIRCUIT_FAILURE_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  CIRCUIT_OPEN_DURATION_MS: z.coerce.number().int().positive().default(30_000),
+
+  // Retry with exponential backoff + jitter (Phase 5), applied before the
+  // circuit breaker ever records a failure — see lib/resilience.ts.
+  RETRY_MAX_ATTEMPTS: z.coerce.number().int().positive().default(4),
+  RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(1000),
 });
 
 export const env = schema.parse(process.env);

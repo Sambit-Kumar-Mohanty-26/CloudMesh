@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@cloudmesh/auth": "*",
+    "@cloudmesh/circuit-breaker": "*",
     "@cloudmesh/db": "*",
     "@cloudmesh/rate-limiter": "*",
     "fastify": "^5.1.0",

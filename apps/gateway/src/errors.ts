@@ -47,3 +47,32 @@ export class RateLimitError extends AppError {
     });
   }
 }
+
+/** The circuit breaker for a specific provider is open — this gateway is
+ *  deliberately refusing to call it right now, not the provider itself
+ *  rejecting the request (that would be ProviderError, 502). */
+export class ServiceUnavailableError extends AppError {
+  constructor(message: string, retryAfterSeconds?: number, code = "SERVICE_UNAVAILABLE") {
+    super(
+      503,
+      message,
+      code,
+      retryAfterSeconds !== undefined
+        ? { "Retry-After": String(Math.max(1, Math.ceil(retryAfterSeconds))) }
+        : undefined,
+    );
+  }
+}
+
+/** Every candidate provider for model:"auto" has an open circuit — a real
+ *  outage signal per the design doc ("All OPEN -> queue or 503"), not
+ *  something to paper over by trying one anyway. */
+export class AllProvidersUnavailableError extends ServiceUnavailableError {
+  constructor() {
+    super(
+      "All configured providers are currently unavailable",
+      undefined,
+      "ALL_PROVIDERS_UNAVAILABLE",
+    );
+  }
+}

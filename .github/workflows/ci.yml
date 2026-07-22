@@ -95,8 +95,10 @@ jobs:
       # (matching these exact service ports/credentials) — nothing further
       # to pass in here. packages/auth's tests are pure (no DB/Redis) but
       # run alongside these for one consolidated report. packages/rate-
-      # limiter needs Redis only — it reads REDIS_URL itself.
+      # limiter and packages/circuit-breaker need Redis only — each reads
+      # REDIS_URL itself.
       - run: npm test --workspace=@cloudmesh/auth
       - run: npm test --workspace=@cloudmesh/rate-limiter
+      - run: npm test --workspace=@cloudmesh/circuit-breaker
       - run: npm test --workspace=@cloudmesh/api
       - run: npm test --workspace=@cloudmesh/gateway
