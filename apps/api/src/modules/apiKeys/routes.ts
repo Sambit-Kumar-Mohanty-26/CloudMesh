@@ -5,10 +5,17 @@ import { requireJwt } from "../../middleware/requireJwt.js";
 import { createApiKey, listApiKeys, revokeApiKey } from "./service.js";
 import { createApiKeySchema } from "./schemas.js";
 
+// Key creation mints a new standing credential - the same category of
+// risk as login/register (see auth/routes.ts), just via a JWT session
+// instead of a password. Tighter than the generic global baseline in
+// app.ts, so a compromised/leaked JWT can't be used to mint an unbounded
+// number of independent, longer-lived API keys before it's caught.
+const createKeyRateLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
+
 export default async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", requireJwt);
 
-  fastify.post("/api-keys", async (request, reply) => {
+  fastify.post("/api-keys", createKeyRateLimit, async (request, reply) => {
     let input;
     try {
       input = createApiKeySchema.parse(request.body);
