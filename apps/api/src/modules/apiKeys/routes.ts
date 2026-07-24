@@ -12,6 +12,19 @@ import { createApiKeySchema } from "./schemas.js";
 // number of independent, longer-lived API keys before it's caught.
 const createKeyRateLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
+// Revocation is a mutation too — a leaked JWT shouldn't be able to mass-
+// revoke every key an org has (a self-inflicted DoS on the org's own API
+// access) faster than someone notices. Same limit as creation: same abuse
+// shape, same category of risk.
+const revokeKeyRateLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
+
+// Listing is read-only and lower-risk than mint/revoke, but still gets its
+// own explicit limit rather than relying solely on the generic global
+// baseline in app.ts — this router handles nothing but credential
+// management, so every route in it gets rate limiting called out
+// explicitly instead of leaving one to an implicit, easy-to-miss default.
+const listKeysRateLimit = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
+
 export default async function apiKeyRoutes(fastify: FastifyInstance) {
   fastify.addHook("preHandler", requireJwt);
 
@@ -33,12 +46,12 @@ export default async function apiKeyRoutes(fastify: FastifyInstance) {
     return key;
   });
 
-  fastify.get("/api-keys", async (request) => {
+  fastify.get("/api-keys", listKeysRateLimit, async (request) => {
     const orgId = request.user!.orgId;
     return listApiKeys({ db: fastify.db, redis: fastify.redis }, orgId);
   });
 
-  fastify.delete("/api-keys/:id", async (request, reply) => {
+  fastify.delete("/api-keys/:id", revokeKeyRateLimit, async (request, reply) => {
     const { id } = request.params as { id: string };
     const orgId = request.user!.orgId;
     await revokeApiKey({ db: fastify.db, redis: fastify.redis }, orgId, id);

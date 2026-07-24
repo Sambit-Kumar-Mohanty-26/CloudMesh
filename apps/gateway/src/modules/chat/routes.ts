@@ -166,9 +166,17 @@ export default async function chatRoutes(fastify: FastifyInstance) {
               promptHash,
               embedding,
               JSON.stringify(response),
-            ).catch((err: unknown) =>
-              request.log.warn({ err }, "failed to write semantic cache entry"),
-            );
+            ).catch((err: unknown) => {
+              // Deliberately not logging `err` itself (or its .message) -
+              // this query's parameters include the LLM's actual response
+              // text, and some Prisma raw-query error paths echo bound
+              // parameter values back in their message. Only the error's
+              // class name is safe to record; the content never should be.
+              request.log.warn(
+                { errName: err instanceof Error ? err.name : "unknown" },
+                "failed to write semantic cache entry",
+              );
+            });
           }
         } else {
           response = await runChat();

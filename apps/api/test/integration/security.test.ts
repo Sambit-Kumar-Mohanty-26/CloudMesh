@@ -79,6 +79,75 @@ describe("security: rate limiting", () => {
     expect(statusCodes.slice(0, 10).every((c) => c === 201)).toBe(true);
     expect(statusCodes[10]).toBe(429);
   });
+
+  it("throttles repeated API key revocation (a leaked JWT can't mass-revoke an org's keys unbounded)", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { orgName: "Acme", email: "revokeflood@acme.test", password: "correct-horse-1" },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "revokeflood@acme.test", password: "correct-horse-1" },
+    });
+    const accessToken = loginRes.json().accessToken as string;
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api-keys",
+      headers: { authorization: `Bearer ${accessToken}` },
+      payload: { scopes: ["chat:read"] },
+    });
+    const { id } = created.json();
+
+    // Repeatedly hitting the same (already-revoked, after the first call)
+    // key id is fine — the rate limit trips on the request itself, before
+    // the route's own 204/404 business logic even runs.
+    const attempt = () =>
+      app.inject({
+        method: "DELETE",
+        url: `/api-keys/${id}`,
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+    const results = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(await attempt());
+    }
+
+    expect(results[10]?.statusCode).toBe(429);
+  });
+
+  it("throttles repeated API key listing", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { orgName: "Acme", email: "listflood@acme.test", password: "correct-horse-1" },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "listflood@acme.test", password: "correct-horse-1" },
+    });
+    const accessToken = loginRes.json().accessToken as string;
+
+    const attempt = () =>
+      app.inject({
+        method: "GET",
+        url: "/api-keys",
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+    const results = [];
+    for (let i = 0; i < 31; i++) {
+      results.push(await attempt());
+    }
+
+    const statusCodes = results.map((r) => r.statusCode);
+    expect(statusCodes.slice(0, 30).every((c) => c === 200)).toBe(true);
+    expect(statusCodes[30]).toBe(429);
+  });
 });
 
 describe("security: malformed/hostile input", () => {
