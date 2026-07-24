@@ -1,5 +1,5 @@
 import { generateApiKey, hashApiKey } from "@cloudmesh/auth";
-import { getAdminPrisma, resetDatabase } from "@cloudmesh/db";
+import { getAdminPrisma, resetDatabase, type Prisma } from "@cloudmesh/db";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../src/app.js";
 
@@ -20,9 +20,10 @@ export async function resetAll(app: FastifyInstance): Promise<void> {
 export async function createTestApiKey(
   orgName = "Gateway Test Org",
   rateLimitRpm = 60,
+  featureFlags: Prisma.InputJsonValue = {},
 ): Promise<{ rawKey: string; orgId: string }> {
   const db = getAdminPrisma();
-  const org = await db.organization.create({ data: { name: orgName } });
+  const org = await db.organization.create({ data: { name: orgName, featureFlags } });
   const { rawKey } = generateApiKey();
   await db.apiKey.create({
     data: {

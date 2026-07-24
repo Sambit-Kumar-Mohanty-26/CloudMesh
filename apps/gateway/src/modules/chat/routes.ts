@@ -2,13 +2,27 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { env } from "../../env.js";
 import { ProviderError, ServiceUnavailableError, ValidationError } from "../../errors.js";
+import { getOrgFeatureFlags } from "../../lib/featureFlags.js";
 import { getIdempotentReplay, storeIdempotentResult } from "../../lib/idempotency.js";
+import { withRequestDedup } from "../../lib/requestDedup.js";
 import { callProviderResilient } from "../../lib/resilience.js";
 import { resolveModelWithFallback } from "../../lib/resolveModel.js";
+import {
+  computePromptHash,
+  flushCache,
+  getCacheStats,
+  lookupCache,
+  recordCacheOutcome,
+  storeCache,
+} from "../../lib/semanticCache.js";
 import { requireApiKey } from "../../middleware/requireApiKey.js";
 import { requireRateLimit } from "../../middleware/requireRateLimit.js";
 import type { UnifiedChatChunk, UnifiedChatResponse } from "../../providers/types.js";
 import { chatRequestSchema } from "./schemas.js";
+
+function promptText(messages: { role: string; content: string }[]): string {
+  return messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+}
 
 const IDEMPOTENCY_HEADER = "idempotency-key";
 
@@ -95,11 +109,70 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     };
 
     if (!input.stream) {
+      // Semantic cache + request dedup (Phase 6) are per-org opt-in
+      // (organizations.feature_flags) and, like idempotency replay above,
+      // deliberately non-streaming-only — see the streaming branch below
+      // for why (same reasoning as idempotency's streaming simplification).
+      const flags = await getOrgFeatureFlags(request.server.db, request.server.redis, orgId);
+      const promptHash = computePromptHash(resolved.providerModel, input.messages);
+
+      const runChat = (): Promise<UnifiedChatResponse> => {
+        const doCall = () =>
+          callProviderResilient(request.server.redis, resolved.provider.name, () =>
+            resolved.provider.chat(providerReq),
+          );
+        // The dedup key MUST include orgId — promptHash alone isn't
+        // org-scoped, so two different orgs sending byte-identical prompts
+        // must never be coalesced into sharing one response.
+        return flags.request_dedup
+          ? withRequestDedup(request.server.redis, `${orgId}:${promptHash}`, doCall, {
+              leaderTtlSeconds: env.DEDUP_LEADER_TTL_SECONDS,
+              followerWaitMs: env.DEDUP_FOLLOWER_WAIT_MS,
+            })
+          : doCall();
+      };
+
       let response: UnifiedChatResponse;
       try {
-        response = await callProviderResilient(request.server.redis, resolved.provider.name, () =>
-          resolved.provider.chat(providerReq),
-        );
+        if (flags.semantic_cache) {
+          const embedding = await request.server.embeddings.embed(promptText(input.messages));
+          const cached = await lookupCache(
+            request.server.db,
+            orgId,
+            resolved.providerModel,
+            promptHash,
+            embedding,
+            {
+              similarityThreshold: env.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
+              ttlDays: flags.cache_ttl_days ?? env.SEMANTIC_CACHE_TTL_DAYS,
+            },
+          );
+          if (cached) {
+            await recordCacheOutcome(request.server.redis, orgId, "hit");
+            response = JSON.parse(cached) as UnifiedChatResponse;
+          } else {
+            await recordCacheOutcome(request.server.redis, orgId, "miss");
+            response = await runChat();
+            // Awaited (not fire-and-forget): a caller that immediately
+            // repeats this request, or immediately flushes the cache, must
+            // see a consistent, already-written state — not race an
+            // in-flight INSERT. Errors are still swallowed so a failed
+            // write degrades to "no caching this time," never a failed
+            // response for work that already succeeded.
+            await storeCache(
+              request.server.db,
+              orgId,
+              resolved.providerModel,
+              promptHash,
+              embedding,
+              JSON.stringify(response),
+            ).catch((err: unknown) =>
+              request.log.warn({ err }, "failed to write semantic cache entry"),
+            );
+          }
+        } else {
+          response = await runChat();
+        }
       } catch (err) {
         if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
           if (err.headers) reply.headers(err.headers);
@@ -208,5 +281,18 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
   fastify.get("/v1/models", async (request) => {
     return { models: await request.server.models.listModels() };
+  });
+
+  fastify.get("/v1/cache/stats", async (request) => {
+    const orgId = request.apiKeyCtx!.orgId;
+    return getCacheStats(request.server.redis, orgId);
+  });
+
+  fastify.delete("/v1/cache", async (request, reply) => {
+    const orgId = request.apiKeyCtx!.orgId;
+    const query = request.query as { keepModel?: string };
+    const deleted = await flushCache(request.server.db, orgId, query.keepModel);
+    reply.code(200);
+    return { deleted };
   });
 }

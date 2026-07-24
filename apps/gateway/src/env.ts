@@ -65,6 +65,20 @@ const schema = z.object({
   // circuit breaker ever records a failure — see lib/resilience.ts.
   RETRY_MAX_ATTEMPTS: z.coerce.number().int().positive().default(4),
   RETRY_BASE_DELAY_MS: z.coerce.number().int().positive().default(1000),
+
+  // Semantic cache (Phase 6) — org-scoped, per organizations.feature_flags,
+  // not a global on/off. See lib/semanticCache.ts.
+  SEMANTIC_CACHE_SIMILARITY_THRESHOLD: z.coerce.number().min(0).max(1).default(0.92),
+  SEMANTIC_CACHE_TTL_DAYS: z.coerce.number().int().positive().default(7),
+
+  // Request dedup (Phase 6) — in-flight coalescing of identical concurrent
+  // requests. DEDUP_LEADER_TTL_SECONDS bounds how long a "leader" has to
+  // finish before its claim expires (so a crashed leader doesn't permanently
+  // wedge the key); DEDUP_FOLLOWER_WAIT_MS bounds how long a follower waits
+  // for the leader's result before giving up and calling the provider
+  // itself — see lib/requestDedup.ts.
+  DEDUP_LEADER_TTL_SECONDS: z.coerce.number().int().positive().default(30),
+  DEDUP_FOLLOWER_WAIT_MS: z.coerce.number().int().positive().default(10_000),
 });
 
 export const env = schema.parse(process.env);

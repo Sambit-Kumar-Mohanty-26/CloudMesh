@@ -29,6 +29,14 @@ export default defineConfig({
       // Lets "auto" fall back to the always-succeeding mock provider once
       // DEFAULT_MODEL's (gpt-4o-mini, unconfigured in tests) circuit opens.
       AUTO_FALLBACK_MODELS: "mock-echo",
+      // Semantic cache (Phase 6): a tight TTL/threshold so tests can prove
+      // real expiry (insert an old row, assert it's excluded) without
+      // waiting out the 7-day production default.
+      SEMANTIC_CACHE_TTL_DAYS: "7",
+      // Request dedup (Phase 6): short enough that the follower-timeout
+      // fallback test doesn't burn the production 10s default per case.
+      DEDUP_LEADER_TTL_SECONDS: "5",
+      DEDUP_FOLLOWER_WAIT_MS: "500",
     },
     testTimeout: 15_000,
     hookTimeout: 15_000,

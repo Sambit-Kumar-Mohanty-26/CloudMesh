@@ -9,7 +9,8 @@ individual apps don't reimplement that plumbing.
 ```
 apps/api/                 Fastify service: auth, API key management
 apps/gateway/              Fastify service: unified /v1/chat across providers — streaming,
-                             idempotency, rate limiting, circuit breaker + retry, fallback
+                             idempotency, rate limiting, circuit breaker + retry, fallback,
+                             semantic cache + request dedup
 packages/db/                Prisma schema, migrations, shared DB client
 packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
 packages/rate-limiter/        4 distributed rate-limiting algorithms (Redis + Lua)

@@ -3,6 +3,7 @@ import { env } from "./env.js";
 import { AppError } from "./errors.js";
 import chatRoutes from "./modules/chat/routes.js";
 import dbPlugin from "./plugins/db.js";
+import embeddingsPlugin from "./plugins/embeddings.js";
 import modelsPlugin from "./plugins/models.js";
 import redisPlugin from "./plugins/redis.js";
 
@@ -14,6 +15,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dbPlugin);
   await app.register(redisPlugin);
   await app.register(modelsPlugin);
+  await app.register(embeddingsPlugin);
 
   app.setErrorHandler((err, request, reply) => {
     if (err instanceof AppError) {

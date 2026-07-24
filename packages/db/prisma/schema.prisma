@@ -92,6 +92,10 @@ model UsageRecord {
 model SemanticCacheEntry {
   id         String                   @id @default(uuid()) @db.Uuid
   orgId      String                   @map("org_id") @db.Uuid
+  // A cache entry from one model must never satisfy a request for another —
+  // responses aren't interchangeable across models even for the same
+  // prompt. Part of every lookup/insert/invalidation query, not just stored.
+  model      String
   promptHash String                   @map("prompt_hash")
   // vector(1536): column + ivfflat index are created via raw SQL in the
   // RLS/pgvector migration, since Prisma has no native vector column type.
@@ -101,6 +105,6 @@ model SemanticCacheEntry {
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
-  @@index([orgId])
+  @@index([orgId, model])
   @@map("semantic_cache")
 }

@@ -55,6 +55,7 @@ erDiagram
     SEMANTIC_CACHE_ENTRY {
         uuid id PK
         uuid org_id FK
+        text model
         text prompt_hash
         vector embedding "vector(1536), ivfflat/cosine"
         text response
@@ -83,3 +84,15 @@ current_setting('app.current_org')`. Verified against a live DB
   index are added via raw SQL, not Prisma DSL — Prisma has no native pgvector
   column/index type, so this column is declared `Unsupported("vector(1536)")`
   in `schema.prisma` and the column/index live entirely in the migration SQL.
+  Cache entries are also scoped by `model` (Phase 6,
+  `20260724095537_add_semantic_cache_model`) — a response cached for one
+  model must never satisfy a lookup for another. **Gotcha for future
+  migrations touching this table**: `prisma migrate dev`'s diff doesn't know
+  about the ivfflat index (it's raw SQL, invisible to the DSL) and will
+  silently `DROP INDEX` it as "untracked" on the next schema change that
+  touches `semantic_cache` — the generated migration must have the
+  `CREATE INDEX ... USING ivfflat` re-added by hand before it's applied, or
+  the cosine search silently degrades to a full table scan. Caught here by
+  manually diffing the migration's SQL against the previous one, not by a
+  test (there isn't one — this is a migration-authoring gotcha, not
+  something a query test would catch).

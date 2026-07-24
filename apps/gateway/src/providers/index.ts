@@ -1,6 +1,11 @@
 import type { Redis } from "ioredis";
 import type { Env } from "../env.js";
 import { AnthropicAdapter } from "./anthropic.js";
+import {
+  MockEmbeddingProvider,
+  OpenAIEmbeddingAdapter,
+  type EmbeddingProvider,
+} from "./embeddings.js";
 import { GeminiAdapter } from "./gemini.js";
 import { MockProvider } from "./mock.js";
 import { OllamaAdapter } from "./ollama.js";
@@ -44,5 +49,19 @@ export function buildRegistry(env: Env, redis: Redis): ModelRegistry {
   return createModelRegistry(rules, env.DEFAULT_MODEL);
 }
 
+/**
+ * Same "mock when explicitly enabled, otherwise the real adapter" pattern as
+ * buildRegistry — ENABLE_MOCK_PROVIDER is deliberately reused rather than a
+ * new flag, since it already means "let the pipeline run end-to-end without
+ * real provider credentials" and embeddings are part of that same pipeline.
+ */
+export function buildEmbeddingProvider(env: Env): EmbeddingProvider {
+  if (env.ENABLE_MOCK_PROVIDER) {
+    return new MockEmbeddingProvider();
+  }
+  return new OpenAIEmbeddingAdapter({ apiKey: env.OPENAI_API_KEY, baseUrl: env.OPENAI_BASE_URL });
+}
+
 export type { ModelRegistry, ProviderRule, ResolvedModel } from "./registry.js";
 export * from "./types.js";
+export * from "./embeddings.js";
