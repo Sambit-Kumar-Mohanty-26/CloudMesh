@@ -48,6 +48,37 @@ describe("security: rate limiting", () => {
 
     expect(results[5]?.statusCode).toBe(429);
   });
+
+  it("throttles repeated API key creation (a leaked JWT can't mint unbounded standing credentials)", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { orgName: "Acme", email: "keyflood@acme.test", password: "correct-horse-1" },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "keyflood@acme.test", password: "correct-horse-1" },
+    });
+    const accessToken = loginRes.json().accessToken as string;
+
+    const attempt = () =>
+      app.inject({
+        method: "POST",
+        url: "/api-keys",
+        headers: { authorization: `Bearer ${accessToken}` },
+        payload: { scopes: ["chat:read"] },
+      });
+
+    const results = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(await attempt());
+    }
+
+    const statusCodes = results.map((r) => r.statusCode);
+    expect(statusCodes.slice(0, 10).every((c) => c === 201)).toBe(true);
+    expect(statusCodes[10]).toBe(429);
+  });
 });
 
 describe("security: malformed/hostile input", () => {
