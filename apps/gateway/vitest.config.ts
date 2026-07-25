@@ -37,6 +37,14 @@ export default defineConfig({
       // fallback test doesn't burn the production 10s default per case.
       DEDUP_LEADER_TTL_SECONDS: "5",
       DEDUP_FOLLOWER_WAIT_MS: "500",
+      // Billing (Phase 7): a short lock TTL/backoff is plenty for tests
+      // that don't exercise real contention, and a real downgrade target
+      // distinct from AUTO_FALLBACK_MODELS so the two mechanisms' tests
+      // can't accidentally pass for the wrong reason.
+      BILLING_LOCK_TTL_MS: "2000",
+      BILLING_LOCK_RETRIES: "2",
+      BILLING_LOCK_RETRY_DELAY_MS: "20",
+      BUDGET_CONSTRAINED_MODEL: "mock-echo",
     },
     testTimeout: 15_000,
     hookTimeout: 15_000,

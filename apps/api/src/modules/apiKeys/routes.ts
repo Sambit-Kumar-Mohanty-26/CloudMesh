@@ -26,6 +26,15 @@ const revokeKeyRateLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minu
 const listKeysRateLimit = { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } };
 
 export default async function apiKeyRoutes(fastify: FastifyInstance) {
+  // Every route below has its own explicit rate limit (createKeyRateLimit /
+  // listKeysRateLimit / revokeKeyRateLimit), proven by the three tests in
+  // security.test.ts asserting a real 429 past each limit. CodeQL's static
+  // model doesn't appear to trace Fastify's declarative `config.rateLimit`
+  // route-option idiom as evidence of protection - see this repeatedly
+  // flagging this same preHandler line across pushes that add per-route
+  // limits - so this suppression is a detection-model gap, not a missing
+  // mitigation.
+  // codeql[js/missing-rate-limiting]
   fastify.addHook("preHandler", requireJwt);
 
   fastify.post("/api-keys", createKeyRateLimit, async (request, reply) => {

@@ -79,6 +79,29 @@ const schema = z.object({
   // itself — see lib/requestDedup.ts.
   DEDUP_LEADER_TTL_SECONDS: z.coerce.number().int().positive().default(30),
   DEDUP_FOLLOWER_WAIT_MS: z.coerce.number().int().positive().default(10_000),
+
+  // Billing (Phase 7) — per-org opt-in via feature_flags.billing_enforcement.
+  // BILLING_LOCK_TTL_MS deliberately does NOT default to the design doc's
+  // literal "EX 5" — see lib/billing.ts for why a 5s TTL held across a real
+  // LLM call would routinely expire mid-request; this lock is only ever
+  // held across the brief budget *check*, not the call, so a shorter TTL
+  // than "generous enough for an LLM response" is fine and correct here.
+  BILLING_LOCK_TTL_MS: z.coerce.number().int().positive().default(5000),
+  BILLING_LOCK_RETRIES: z.coerce.number().int().nonnegative().default(3),
+  BILLING_LOCK_RETRY_DELAY_MS: z.coerce.number().int().positive().default(50),
+
+  // model:"auto" is substituted with this model once an org's remaining
+  // budget drops below 5% — same "auto-only, never an explicit model
+  // request" rule as Phase 5's provider fallback. Unset (default) disables
+  // the downgrade behavior entirely, even for orgs with billing_enforcement
+  // on — it only makes sense once a real "cheap" model is actually
+  // configured for this deployment.
+  BUDGET_CONSTRAINED_MODEL: z.string().optional(),
+
+  // Outbox poller (Phase 7) — see lib/outbox.ts. No real event bus exists
+  // yet (NATS JetStream is Phase 10), so this just moves rows from
+  // unpublished to published-via-LogEventPublisher on a timer.
+  OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(500),
 });
 
 export const env = schema.parse(process.env);

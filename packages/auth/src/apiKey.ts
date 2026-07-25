@@ -16,7 +16,7 @@ export function generateApiKey(): { rawKey: string; keyPrefix: string } {
  * would be a regression, not a fix.
  */
 export function hashApiKey(rawKey: string): string {
-  // codeql[js/insufficient-password-hash]: false positive, see doc comment above
+  // codeql[js/insufficient-password-hash]
   return createHash("sha256").update(rawKey).digest("hex");
 }
 

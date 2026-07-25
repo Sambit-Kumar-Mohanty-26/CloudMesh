@@ -9,6 +9,24 @@ import { getAdminPrisma } from "./client.js";
 export async function resetDatabase(): Promise<void> {
   const prisma = getAdminPrisma();
   await prisma.$executeRawUnsafe(
-    `TRUNCATE TABLE "usage_records", "semantic_cache", "api_keys", "users", "organizations" RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE "usage_records", "semantic_cache", "api_keys", "users", "organizations", "billing_plans", "invoices", "stripe_events", "outbox_events" RESTART IDENTITY CASCADE;`,
   );
+}
+
+/**
+ * billing_plans is global catalog data (seeded once in real deployments,
+ * via packages/db/prisma/seed.ts), not per-org test fixtures — but
+ * resetDatabase() truncates it along with everything else for full test
+ * isolation, so any test that exercises budget enforcement needs to
+ * re-seed it. Test-only, same admin-connection rationale as resetDatabase.
+ */
+export async function seedBillingPlans(): Promise<void> {
+  const prisma = getAdminPrisma();
+  await prisma.billingPlan.createMany({
+    data: [
+      { planTier: "FREE", monthlyBudgetUsd: 5, priceUsd: 0 },
+      { planTier: "PRO", monthlyBudgetUsd: 100, priceUsd: 49 },
+      { planTier: "ENTERPRISE", monthlyBudgetUsd: 2000, priceUsd: 999 },
+    ],
+  });
 }

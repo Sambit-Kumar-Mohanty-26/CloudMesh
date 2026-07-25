@@ -2,6 +2,11 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { env } from "../../env.js";
 import { ProviderError, ServiceUnavailableError, ValidationError } from "../../errors.js";
+import {
+  enforceBudget,
+  maybePublishBudgetWarning,
+  recordUsageAndOutbox,
+} from "../../lib/billing.js";
 import { getOrgFeatureFlags } from "../../lib/featureFlags.js";
 import { getIdempotentReplay, storeIdempotentResult } from "../../lib/idempotency.js";
 import { withRequestDedup } from "../../lib/requestDedup.js";
@@ -80,6 +85,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
     // Guaranteed by the requireApiKey preHandler above.
     const orgId = request.apiKeyCtx!.orgId;
+    const apiKeyId = request.apiKeyCtx!.apiKeyId;
     const idempotencyKey = getIdempotencyKey(request);
 
     if (idempotencyKey) {
@@ -91,13 +97,42 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       }
     }
 
+    // Semantic cache + request dedup are non-streaming-only (see below);
+    // billing enforcement + usage recording apply to both — an unbilled
+    // streamed request is a real revenue gap, not an acceptable
+    // simplification the way cache/dedup's streaming skip is.
+    const flags = await getOrgFeatureFlags(request.server.db, request.server.redis, orgId);
+
+    // Throws BudgetExceededError (402) if the org has no budget left —
+    // both AppError subclasses this throws, or that resolveModelWithFallback
+    // throws below, are handled generically by app.ts's error handler.
+    const budgetStatus = flags.billing_enforcement
+      ? await enforceBudget(request.server.db, request.server.redis, orgId, {
+          ttlMs: env.BILLING_LOCK_TTL_MS,
+          retries: env.BILLING_LOCK_RETRIES,
+          retryDelayMs: env.BILLING_LOCK_RETRY_DELAY_MS,
+        })
+      : undefined;
+
+    // Budget-constrained downgrade (auto-only, same rule as Phase 5's
+    // provider fallback: an explicit model request is never silently
+    // swapped for a different one, only "auto" resolution is steerable).
+    const effectiveModelName =
+      flags.billing_enforcement &&
+      input.model === "auto" &&
+      budgetStatus &&
+      budgetStatus.remainingFraction < 0.05 &&
+      env.BUDGET_CONSTRAINED_MODEL
+        ? env.BUDGET_CONSTRAINED_MODEL
+        : input.model;
+
     // Throws ValidationError (unknown model) or AllProvidersUnavailableError
     // (auto, every candidate's circuit open) — both AppError subclasses,
     // handled generically by app.ts's error handler.
     const resolved = await resolveModelWithFallback(
       request.server.models,
       request.server.redis,
-      input.model,
+      effectiveModelName,
     );
 
     const providerReq = {
@@ -108,12 +143,15 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       temperature: input.temperature,
     };
 
+    if (flags.billing_enforcement && budgetStatus) {
+      await maybePublishBudgetWarning(request.server.db, orgId, budgetStatus);
+    }
+
     if (!input.stream) {
       // Semantic cache + request dedup (Phase 6) are per-org opt-in
       // (organizations.feature_flags) and, like idempotency replay above,
       // deliberately non-streaming-only — see the streaming branch below
       // for why (same reasoning as idempotency's streaming simplification).
-      const flags = await getOrgFeatureFlags(request.server.db, request.server.redis, orgId);
       const promptHash = computePromptHash(resolved.providerModel, input.messages);
 
       const runChat = (): Promise<UnifiedChatResponse> => {
@@ -133,6 +171,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       };
 
       let response: UnifiedChatResponse;
+      let fromCache = false;
       try {
         if (flags.semantic_cache) {
           const embedding = await request.server.embeddings.embed(promptText(input.messages));
@@ -150,6 +189,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           if (cached) {
             await recordCacheOutcome(request.server.redis, orgId, "hit");
             response = JSON.parse(cached) as UnifiedChatResponse;
+            fromCache = true;
           } else {
             await recordCacheOutcome(request.server.redis, orgId, "miss");
             response = await runChat();
@@ -188,6 +228,18 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           return providerFailureBody(err);
         }
         throw err;
+      }
+
+      // A cache hit incurred no new provider cost — billing it again would
+      // double-count the original request that populated the cache entry.
+      if (!fromCache) {
+        await recordUsageAndOutbox(request.server.db, {
+          orgId,
+          apiKeyId,
+          model: resolved.providerModel,
+          usage: response.usage,
+          requestId: response.id,
+        });
       }
 
       if (idempotencyKey) {
@@ -264,11 +316,17 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       writeSSE(reply, { error: err instanceof Error ? err.message : "stream error" });
     }
 
-    reply.raw.write("data: [DONE]\n\n");
-    reply.raw.end();
-
-    // A broken/partial stream must never be cached as a successful result.
-    if (idempotencyKey && !streamFailed) {
+    // Billing + idempotency bookkeeping happens BEFORE reply.raw.end(), not
+    // after: once hijacked, Fastify's test injection (and any real client
+    // watching for the connection to close) resolves on the raw response
+    // ending, not on this handler's promise settling. Awaited work placed
+    // after end() races the caller's next action — e.g. an immediate
+    // idempotency-key replay could run before storeIdempotentResult has
+    // actually written anything. A broken/partial stream must never be
+    // recorded as a successful result — usage numbers from a stream that
+    // failed before its final chunk aren't trustworthy (often still the
+    // {0,0} default).
+    if (!streamFailed) {
       const assembled: UnifiedChatResponse = {
         id: responseId,
         provider: resolved.provider.name,
@@ -277,14 +335,28 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         finishReason,
         usage,
       };
-      await storeIdempotentResult(
-        request.server.redis,
+
+      await recordUsageAndOutbox(request.server.db, {
         orgId,
-        idempotencyKey,
-        { statusCode: 200, body: assembled },
-        env.IDEMPOTENCY_TTL_SECONDS,
-      );
+        apiKeyId,
+        model: resolved.providerModel,
+        usage,
+        requestId: responseId,
+      });
+
+      if (idempotencyKey) {
+        await storeIdempotentResult(
+          request.server.redis,
+          orgId,
+          idempotencyKey,
+          { statusCode: 200, body: assembled },
+          env.IDEMPOTENCY_TTL_SECONDS,
+        );
+      }
     }
+
+    reply.raw.write("data: [DONE]\n\n");
+    reply.raw.end();
   });
 
   fastify.get("/v1/models", async (request) => {

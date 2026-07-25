@@ -11,6 +11,9 @@ export default defineConfig({
       JWT_SECRET: "test-only-secret-do-not-use-anywhere-else-32chars-min",
       JWT_SECRET_PREVIOUS: "",
       BCRYPT_COST: "10", // lower than prod default — tests run this a lot
+      STRIPE_API_KEY: "sk_test_not_real",
+      STRIPE_BASE_URL: "https://api.stripe.test",
+      STRIPE_WEBHOOK_SECRET: "whsec_test_secret",
     },
     testTimeout: 15_000,
     hookTimeout: 15_000,

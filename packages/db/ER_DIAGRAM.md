@@ -6,6 +6,7 @@ erDiagram
     ORGANIZATION ||--o{ API_KEY : has
     ORGANIZATION ||--o{ USAGE_RECORD : has
     ORGANIZATION ||--o{ SEMANTIC_CACHE_ENTRY : has
+    ORGANIZATION ||--o{ INVOICE : has
     API_KEY ||--o{ USAGE_RECORD : authorizes
 
     ORGANIZATION {
@@ -13,6 +14,7 @@ erDiagram
         text name
         enum plan
         text stripe_customer_id
+        numeric monthly_budget_override_usd "null = use plan's default"
         jsonb feature_flags
         timestamp created_at
         timestamp updated_at
@@ -61,6 +63,41 @@ erDiagram
         text response
         timestamp created_at
     }
+
+    BILLING_PLAN {
+        uuid id PK
+        enum plan_tier UK
+        numeric monthly_budget_usd
+        numeric price_usd
+        text stripe_price_id
+        timestamp created_at
+    }
+
+    INVOICE {
+        uuid id PK
+        uuid org_id FK
+        text stripe_invoice_id UK
+        timestamp period_start
+        timestamp period_end
+        numeric amount_usd
+        enum status "PENDING, PAID, FAILED"
+        timestamp created_at
+    }
+
+    STRIPE_EVENT {
+        uuid id PK
+        text stripe_event_id UK
+        text type
+        timestamp processed_at
+    }
+
+    OUTBOX_EVENT {
+        uuid id PK
+        text event_type
+        jsonb payload
+        timestamp published_at "null = not yet published"
+        timestamp created_at
+    }
 ```
 
 ## Notes
@@ -95,4 +132,26 @@ current_setting('app.current_org')`. Verified against a live DB
   the cosine search silently degrades to a full table scan. Caught here by
   manually diffing the migration's SQL against the previous one, not by a
   test (there isn't one — this is a migration-authoring gotcha, not
-  something a query test would catch).
+  something a query test would catch). **This gotcha is worse than
+  originally documented**: Phase 7's migrations
+  (`20260725024959_add_billing_phase7`, and even an empty `--create-only`
+  migration touching nothing at all) both proposed dropping this index too
+  — it's flagged as "drift" on essentially every `prisma migrate dev`
+  invocation from now on, not just ones that touch `semantic_cache`. Always
+  read the generated SQL before applying, every time, regardless of what
+  the migration is nominally about.
+- **Billing (Phase 7)**: `billing_plans` is a global catalog (plan tier ->
+  budget/price), not tenant data — no RLS, same category as a price list.
+  `invoices` has the same `tenant_isolation` RLS policy as `api_keys`/
+  `usage_records`/`semantic_cache`
+  (`packages/db/prisma/migrations/20260725025156_add_invoices_rls`).
+  `stripe_events` (webhook redelivery dedup) and `outbox_events`
+  (transactional outbox, see `apps/gateway/src/lib/outbox.ts`) deliberately
+  have **no** RLS — both are only ever read by internal system processes
+  (the webhook handler, the outbox poller), never by a tenant-scoped API
+  request, so there's no tenant-isolation boundary for them to enforce.
+  `organizations.monthly_budget_override_usd` is nullable — null means "use
+  `billing_plans.monthly_budget_usd` for this org's plan tier," not
+  "unlimited"; an org's plan tier having no seeded `billing_plans` row is
+  what actually means unlimited (fail-open on missing config, not
+  fail-closed on every request for an org whose tier was never seeded).

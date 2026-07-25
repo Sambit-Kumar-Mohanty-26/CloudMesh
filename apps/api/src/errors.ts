@@ -38,3 +38,15 @@ export class ValidationError extends AppError {
     super(400, message, "VALIDATION_ERROR");
   }
 }
+
+/** A Stripe API call failed, or a webhook's signature couldn't be verified
+ *  — the upstream/caller's problem, not an internal bug in this service. */
+export class ProviderError extends AppError {
+  constructor(
+    message: string,
+    public readonly provider: string,
+    statusCode = 502,
+  ) {
+    super(statusCode, message, "PROVIDER_ERROR");
+  }
+}

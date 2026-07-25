@@ -76,3 +76,16 @@ export class AllProvidersUnavailableError extends ServiceUnavailableError {
     );
   }
 }
+
+/** An org's monthly budget is exhausted — 402 Payment Required per the
+ *  Phase 7 design doc, not a 429 (this isn't "slow down and retry," it's
+ *  "no requests will succeed until the budget resets or is raised"). */
+export class BudgetExceededError extends AppError {
+  constructor(remainingUsd: number) {
+    super(
+      402,
+      `Monthly budget exceeded (remaining: $${remainingUsd.toFixed(2)})`,
+      "BUDGET_EXCEEDED",
+    );
+  }
+}

@@ -8,6 +8,15 @@ function sha256(input: string): string {
 }
 
 async function main() {
+  await prisma.billingPlan.createMany({
+    data: [
+      { planTier: "FREE", monthlyBudgetUsd: 5, priceUsd: 0 },
+      { planTier: "PRO", monthlyBudgetUsd: 100, priceUsd: 49 },
+      { planTier: "ENTERPRISE", monthlyBudgetUsd: 2000, priceUsd: 999 },
+    ],
+    skipDuplicates: true,
+  });
+
   const org = await prisma.organization.create({
     data: {
       name: "Acme Inc",

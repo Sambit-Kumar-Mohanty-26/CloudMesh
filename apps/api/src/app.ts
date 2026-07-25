@@ -5,9 +5,12 @@ import { env } from "./env.js";
 import { AppError } from "./errors.js";
 import dbPlugin from "./plugins/db.js";
 import redisPlugin from "./plugins/redis.js";
+import stripePlugin from "./plugins/stripe.js";
 import authRoutes from "./modules/auth/routes.js";
 import apiKeyRoutes from "./modules/apiKeys/routes.js";
 import whoamiRoute from "./modules/apiKeys/whoamiRoute.js";
+import billingRoutes from "./modules/billing/routes.js";
+import billingWebhookRoutes from "./modules/billing/webhookRoutes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -16,6 +19,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(dbPlugin);
   await app.register(redisPlugin);
+  await app.register(stripePlugin);
   await app.register(cookie);
 
   // Global baseline; auth endpoints below override with a much tighter
@@ -53,6 +57,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes);
   await app.register(apiKeyRoutes);
   await app.register(whoamiRoute);
+  await app.register(billingRoutes);
+  await app.register(billingWebhookRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

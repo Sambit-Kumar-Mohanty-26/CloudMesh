@@ -13,6 +13,14 @@ const schema = z.object({
     .optional()
     .or(z.literal("").transform(() => undefined)),
   BCRYPT_COST: z.coerce.number().int().min(10).max(15).default(12),
+
+  // Stripe (Phase 7) — optional, same "must boot without real credentials"
+  // rule as the gateway's LLM provider keys (see CLAUDE.md's Phase 3 notes).
+  // A missing key fails the specific Stripe call it's needed for, not
+  // startup.
+  STRIPE_API_KEY: z.string().optional(),
+  STRIPE_BASE_URL: z.string().url().default("https://api.stripe.com"),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 // Fail fast at boot: a service with a missing/weak JWT secret should never

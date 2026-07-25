@@ -96,8 +96,10 @@ jobs:
       # to pass in here. packages/auth's tests are pure (no DB/Redis) but
       # run alongside these for one consolidated report. packages/rate-
       # limiter and packages/circuit-breaker need Redis only — each reads
-      # REDIS_URL itself.
+      # REDIS_URL itself. packages/billing needs Postgres only (budget
+      # status is pure DB logic, no Redis/lock involved at that layer).
       - run: npm test --workspace=@cloudmesh/auth
+      - run: npm test --workspace=@cloudmesh/billing
       - run: npm test --workspace=@cloudmesh/rate-limiter
       - run: npm test --workspace=@cloudmesh/circuit-breaker
       - run: npm test --workspace=@cloudmesh/api

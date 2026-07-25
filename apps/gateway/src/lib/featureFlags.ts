@@ -11,9 +11,19 @@ export interface OrgFeatureFlags {
   semantic_cache: boolean;
   request_dedup: boolean;
   cache_ttl_days?: number;
+  // Phase 7: hard budget enforcement (402 past the cap) + auto-model
+  // downgrade near the cap. Off by default like every other flag here —
+  // usage_records is still written for every org regardless of this flag
+  // (that's plain observability, not enforcement), only the
+  // reject/downgrade behavior is gated.
+  billing_enforcement: boolean;
 }
 
-const DEFAULTS: OrgFeatureFlags = { semantic_cache: false, request_dedup: false };
+const DEFAULTS: OrgFeatureFlags = {
+  semantic_cache: false,
+  request_dedup: false,
+  billing_enforcement: false,
+};
 
 function cacheKey(orgId: string): string {
   return `feature_flags:${orgId}`;
@@ -29,6 +39,7 @@ function coerce(raw: unknown): OrgFeatureFlags {
       typeof obj.cache_ttl_days === "number" && obj.cache_ttl_days > 0
         ? obj.cache_ttl_days
         : undefined,
+    billing_enforcement: obj.billing_enforcement === true,
   };
 }
 

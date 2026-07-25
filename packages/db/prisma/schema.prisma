@@ -21,11 +21,21 @@ enum Plan {
   ENTERPRISE
 }
 
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
 model Organization {
   id               String   @id @default(uuid()) @db.Uuid
   name             String
   plan             Plan     @default(FREE)
   stripeCustomerId String?  @map("stripe_customer_id")
+  // Per-org override of billing_plans.monthly_budget_usd for the org's plan
+  // tier — null means "use the plan's default," not "unlimited." Lets an
+  // enterprise deal negotiate a custom cap without a whole new Plan tier.
+  monthlyBudgetOverrideUsd Decimal? @map("monthly_budget_override_usd") @db.Decimal(12, 2)
   featureFlags     Json     @default("{}") @map("feature_flags")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
@@ -34,8 +44,69 @@ model Organization {
   apiKeys       ApiKey[]
   usageRecords  UsageRecord[]
   semanticCache SemanticCacheEntry[]
+  invoices      Invoice[]
 
   @@map("organizations")
+}
+
+// Catalog of plan tiers -> budget/price, not per-org — an org's actual
+// effective budget is this row's monthlyBudgetUsd, unless
+// Organization.monthlyBudgetOverrideUsd is set. No RLS: this is global
+// product config, not tenant data (same category as a price list).
+model BillingPlan {
+  id               String   @id @default(uuid()) @db.Uuid
+  planTier         Plan     @unique @map("plan_tier")
+  monthlyBudgetUsd Decimal  @map("monthly_budget_usd") @db.Decimal(12, 2)
+  priceUsd         Decimal  @map("price_usd") @db.Decimal(12, 2)
+  stripePriceId    String?  @map("stripe_price_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("billing_plans")
+}
+
+model Invoice {
+  id              String        @id @default(uuid()) @db.Uuid
+  orgId           String        @map("org_id") @db.Uuid
+  stripeInvoiceId String?       @unique @map("stripe_invoice_id")
+  periodStart     DateTime      @map("period_start")
+  periodEnd       DateTime      @map("period_end")
+  amountUsd       Decimal       @map("amount_usd") @db.Decimal(12, 2)
+  status          InvoiceStatus @default(PENDING)
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, periodStart])
+  @@map("invoices")
+}
+
+// Dedup log for Stripe webhook deliveries — Stripe redelivers on a timeout
+// or non-2xx response, so the same event id can arrive more than once.
+// Not tenant data (no org_id at all — a webhook precedes knowing which org
+// a Stripe object maps to until the handler looks it up), so no RLS.
+model StripeEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  stripeEventId String   @unique @map("stripe_event_id")
+  type          String
+  processedAt   DateTime @default(now()) @map("processed_at")
+
+  @@map("stripe_events")
+}
+
+// Transactional outbox (Phase 7 design doc): a usage_records insert and its
+// outbox_events row commit atomically, so an event bus outage can never
+// silently drop a billing event — the poller just retries until it
+// publishes. No RLS: only ever read by the internal poller process, never
+// by a tenant-scoped API request.
+model OutboxEvent {
+  id          String    @id @default(uuid()) @db.Uuid
+  eventType   String    @map("event_type")
+  payload     Json
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([publishedAt, createdAt])
+  @@map("outbox_events")
 }
 
 model User {
