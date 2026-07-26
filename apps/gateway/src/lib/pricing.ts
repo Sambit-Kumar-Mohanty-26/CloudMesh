@@ -30,6 +30,17 @@ export function getModelPricing(model: string): ModelPricing {
   return PRICING[model] ?? FREE;
 }
 
+/** Blended input/output average, per 1k tokens — the routing engine's
+ *  scoring formula (see lib/routingScoring.ts) needs a single "cost per
+ *  1k tokens" figure per model to score candidates against each other
+ *  before a request has actually run, so there's no real input/output
+ *  split to weight by yet. An average of the two published rates is the
+ *  best a priori estimate available at routing time. */
+export function getBlendedCostPer1k(model: string): number {
+  const pricing = getModelPricing(model);
+  return (pricing.inputPerMillion + pricing.outputPerMillion) / 2 / 1000;
+}
+
 /** Rounded to match usage_records.cost_usd's DECIMAL(12,6) column — avoids
  *  handing Prisma a float with more binary-floating-point noise than the
  *  column can even store. */

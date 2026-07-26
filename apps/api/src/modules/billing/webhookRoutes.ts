@@ -20,7 +20,20 @@ export default async function billingWebhookRoutes(fastify: FastifyInstance) {
   // No requireJwt — this endpoint is authenticated by Stripe's webhook
   // signature (see providers/stripe.ts's verifyWebhookSignature), not a
   // session. There is no session; Stripe's servers call this directly.
-  fastify.post("/billing/webhook", async (request, reply) => {
+  //
+  // That makes it the one publicly-reachable, unauthenticated route in this
+  // service, so it needs its OWN rate limit rather than inheriting the
+  // global baseline: signature verification is real HMAC work and the
+  // handler does DB round-trips, both reachable by anyone who knows the
+  // URL, before any credential check can reject them. The limit is
+  // deliberately generous rather than tight — Stripe legitimately bursts
+  // (an invoice run fans out many events), and a 429 here makes Stripe
+  // retry rather than lose the event, so the cost of being too strict is
+  // redelivery noise on real traffic, while the cost of having no limit at
+  // all is an unauthenticated CPU/DB amplifier.
+  const webhookRateLimit = { config: { rateLimit: { max: 120, timeWindow: "1 minute" } } };
+
+  fastify.post("/billing/webhook", webhookRateLimit, async (request, reply) => {
     const rawBody = request.body as string;
     const signatureHeader = request.headers["stripe-signature"] as string | undefined;
 

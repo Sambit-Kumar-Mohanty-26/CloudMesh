@@ -67,18 +67,24 @@ describe("POST /v1/chat — non-streaming", () => {
     expect(body.usage).toBeDefined();
   });
 
-  it("resolves model:'auto' to the configured default", async () => {
-    // vitest.config.ts doesn't set DEFAULT_MODEL, so it falls back to the
-    // schema default "gpt-4o-mini" — unconfigured in tests, so "auto"
-    // should fail as a provider error (no key), not as an unknown model.
+  it("resolves model:'auto' to the best-scoring candidate, not just DEFAULT_MODEL", async () => {
+    // Phase 8's routing engine scores every candidate in
+    // [DEFAULT_MODEL, ...AUTO_FALLBACK_MODELS] and picks the best one — it
+    // no longer always tries DEFAULT_MODEL first regardless of cost (that
+    // was Phase 5's simpler ordered-fallback, now superseded). In the test
+    // env, DEFAULT_MODEL (gpt-4o-mini/openai, unconfigured — real, nonzero
+    // pricing) loses to AUTO_FALLBACK_MODELS' mock-echo (configured, $0
+    // pricing) under the default cost_optimized preset (weight_cost=0.6,
+    // the dominant term) — see test/unit/routingScoring.test.ts for the
+    // scoring math itself.
     const res = await app.inject({
       method: "POST",
       url: "/v1/chat",
       headers: { authorization: `Bearer ${rawKey}` },
       payload: { model: "auto", messages: [{ role: "user", content: "hi" }] },
     });
-    expect(res.statusCode).toBe(502);
-    expect(res.json().code).toBe("PROVIDER_ERROR");
+    expect(res.statusCode).toBe(200);
+    expect(res.json().provider).toBe("mock");
   });
 
   it("routes an unrecognized model-name shape to the Ollama catch-all, failing as 502 (no server), not a silent 400", async () => {

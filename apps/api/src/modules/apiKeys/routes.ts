@@ -29,11 +29,19 @@ export default async function apiKeyRoutes(fastify: FastifyInstance) {
   // Every route below has its own explicit rate limit (createKeyRateLimit /
   // listKeysRateLimit / revokeKeyRateLimit), proven by the three tests in
   // security.test.ts asserting a real 429 past each limit. CodeQL's static
-  // model doesn't appear to trace Fastify's declarative `config.rateLimit`
-  // route-option idiom as evidence of protection - see this repeatedly
-  // flagging this same preHandler line across pushes that add per-route
-  // limits - so this suppression is a detection-model gap, not a missing
-  // mitigation.
+  // model doesn't trace Fastify's declarative `config.rateLimit` route-option
+  // idiom as evidence of protection, so it flags this preHandler line
+  // anyway — a detection-model gap, not a missing mitigation.
+  //
+  // NOTE: the `codeql[...]` line below is DOCUMENTATION ONLY. GitHub's
+  // default JS/TS code scanning does not honor inline suppression comments,
+  // and this alert is in fact still open in the Security tab despite it.
+  // Clearing a genuine false positive means dismissing it in the GitHub UI
+  // (which records who dismissed it and why) — a repo action, not a code
+  // one, same category as branch protection (see CLAUDE.md). Do NOT add a
+  // repo-wide query filter for js/missing-rate-limiting to silence it:
+  // that query caught two real gaps in the Phase 7 billing routes, so
+  // blinding it would cost more than the noise it removes.
   // codeql[js/missing-rate-limiting]
   fastify.addHook("preHandler", requireJwt);
 

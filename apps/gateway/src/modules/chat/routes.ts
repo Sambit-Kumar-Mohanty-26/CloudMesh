@@ -9,9 +9,11 @@ import {
 } from "../../lib/billing.js";
 import { getOrgFeatureFlags } from "../../lib/featureFlags.js";
 import { getIdempotentReplay, storeIdempotentResult } from "../../lib/idempotency.js";
+import { getProviderStats } from "../../lib/providerStats.js";
 import { withRequestDedup } from "../../lib/requestDedup.js";
-import { callProviderResilient } from "../../lib/resilience.js";
+import { callProviderResilientWithStats } from "../../lib/resilience.js";
 import { resolveModelWithFallback } from "../../lib/resolveModel.js";
+import { getAbStats, recordAbSelection } from "../../lib/routing.js";
 import {
   computePromptHash,
   flushCache,
@@ -129,11 +131,32 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     // Throws ValidationError (unknown model) or AllProvidersUnavailableError
     // (auto, every candidate's circuit open) — both AppError subclasses,
     // handled generically by app.ts's error handler.
-    const resolved = await resolveModelWithFallback(
+    const routeDecision = await resolveModelWithFallback(
       request.server.models,
       request.server.redis,
       effectiveModelName,
+      { preset: flags.routing_preset, abConfig: flags.ab_config },
     );
+    const { resolved } = routeDecision;
+
+    // Phase 8's "routing logs" deliverable — structured, not a DB table
+    // (see lib/resolveModel.ts's RouteDecision doc comment for why).
+    request.log.info(
+      {
+        orgId,
+        requestedModel: input.model,
+        selectedModel: resolved.providerModel,
+        selectedProvider: resolved.provider.name,
+        reason: routeDecision.reason,
+        presetUsed: routeDecision.presetUsed,
+        abVariant: routeDecision.abVariant,
+        candidatesConsidered: routeDecision.candidatesConsidered,
+      },
+      "routing decision",
+    );
+    if (routeDecision.reason === "ab_variant") {
+      await recordAbSelection(request.server.redis, orgId, routeDecision.abVariant!.model);
+    }
 
     const providerReq = {
       model: resolved.providerModel,
@@ -156,7 +179,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
       const runChat = (): Promise<UnifiedChatResponse> => {
         const doCall = () =>
-          callProviderResilient(request.server.redis, resolved.provider.name, () =>
+          callProviderResilientWithStats(request.server.redis, resolved.provider.name, () =>
             resolved.provider.chat(providerReq),
           );
         // The dedup key MUST include orgId — promptHash alone isn't
@@ -212,6 +235,18 @@ export default async function chatRoutes(fastify: FastifyInstance) {
               // text, and some Prisma raw-query error paths echo bound
               // parameter values back in their message. Only the error's
               // class name is safe to record; the content never should be.
+              //
+              // CodeQL flags this as js/clear-text-logging because taint
+              // reaches the catch from a query carrying prompt/response
+              // text, and it doesn't model `.name` (an Error's class name —
+              // "PrismaClientKnownRequestError", never content) as a
+              // sanitizer. The narrowing to `.name` IS the mitigation; the
+              // alert is a false positive that needs dismissing in the
+              // GitHub UI (inline codeql[...] comments are not honored —
+              // see packages/auth/src/apiKey.ts for the same situation).
+              // If this ever changes to log more of `err`, the alert stops
+              // being a false positive — re-check before widening it.
+              // codeql[js/clear-text-logging]
               request.log.warn(
                 { errName: err instanceof Error ? err.name : "unknown" },
                 "failed to write semantic cache entry",
@@ -260,11 +295,14 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     // clean way to detect as failed. Each retry attempt (inside
     // callProviderResilient) opens a BRAND NEW chatStream() call — reusing
     // one iterator across retries wouldn't work, since a generator that's
-    // already thrown is done, not resumable.
+    // already thrown is done, not resumable. The routing stats latency
+    // sample this records is therefore time-to-first-chunk, not full
+    // stream duration — the same atomic, retryable unit resilience.ts
+    // already treats streaming's circuit/retry logic as bounded to.
     let first: IteratorResult<UnifiedChatChunk>;
     let iterator: AsyncIterator<UnifiedChatChunk>;
     try {
-      const attempt = await callProviderResilient(
+      const attempt = await callProviderResilientWithStats(
         request.server.redis,
         resolved.provider.name,
         async () => {
@@ -374,5 +412,29 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     const deleted = await flushCache(request.server.db, orgId, query.keepModel);
     reply.code(200);
     return { deleted };
+  });
+
+  // Phase 8's "real-time stats" deliverable — the same numbers the routing
+  // engine itself scores candidates with, exposed for debugging/ops
+  // visibility (e.g. "why did auto pick provider X"). Provider stats are
+  // global (see lib/providerStats.ts), not org-scoped — every org's
+  // traffic to a given provider shares one reading of that provider's
+  // real-world performance.
+  fastify.get("/v1/routing/stats", async (request) => {
+    const providers = request.server.models.listProviderNames();
+    const stats = await Promise.all(
+      providers.map(
+        async (provider) =>
+          [provider, await getProviderStats(request.server.redis, provider)] as const,
+      ),
+    );
+    return Object.fromEntries(stats);
+  });
+
+  fastify.get("/v1/routing/ab-stats", async (request) => {
+    const orgId = request.apiKeyCtx!.orgId;
+    const flags = await getOrgFeatureFlags(request.server.db, request.server.redis, orgId);
+    if (!flags.ab_config) return {};
+    return getAbStats(request.server.redis, orgId, flags.ab_config);
   });
 }

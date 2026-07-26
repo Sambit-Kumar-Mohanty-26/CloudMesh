@@ -10,8 +10,9 @@ individual apps don't reimplement that plumbing.
 apps/api/                 Fastify service: auth, API key management, billing config,
                              invoices, Stripe webhook receiver
 apps/gateway/              Fastify service: unified /v1/chat across providers — streaming,
-                             idempotency, rate limiting, circuit breaker + retry, fallback,
-                             semantic cache + request dedup, budget enforcement + usage billing
+                             idempotency, rate limiting, circuit breaker + retry, semantic cache
+                             + request dedup, budget enforcement + usage billing, intelligent
+                             routing (scoring, named presets, A/B)
 packages/db/                Prisma schema, migrations, shared DB client
 packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
 packages/billing/             Shared budget-status logic (getBudgetStatus) used by both apps/*

@@ -8,6 +8,10 @@ export interface ResolvedModel {
 export interface ModelRegistry {
   resolve(modelName: string): ResolvedModel | undefined;
   listModels(): Promise<ModelInfo[]>;
+  /** Distinct provider names this registry can route to — Phase 8's
+   *  `GET /v1/routing/stats` uses this to know which providers to report
+   *  on without a separate, easy-to-drift list of provider names. */
+  listProviderNames(): string[];
 }
 
 export interface ProviderRule {
@@ -46,6 +50,9 @@ export function createModelRegistry(rules: ProviderRule[], defaultModel: string)
       // not blank out discovery for every other provider.
       const results = await Promise.allSettled(providers.map((p) => p.models()));
       return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+    },
+    listProviderNames(): string[] {
+      return [...new Set(rules.map((r) => r.provider.name))];
     },
   };
 }

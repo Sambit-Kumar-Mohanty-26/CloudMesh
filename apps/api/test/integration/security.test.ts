@@ -148,6 +148,63 @@ describe("security: rate limiting", () => {
     expect(statusCodes.slice(0, 30).every((c) => c === 200)).toBe(true);
     expect(statusCodes[30]).toBe(429);
   });
+
+  it("throttles repeated budget changes (a leaked JWT can't flap an org's spending cap unbounded)", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { orgName: "Acme", email: "budgetflood@acme.test", password: "correct-horse-1" },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "budgetflood@acme.test", password: "correct-horse-1" },
+    });
+    const accessToken = loginRes.json().accessToken as string;
+
+    const attempt = () =>
+      app.inject({
+        method: "PATCH",
+        url: "/billing/budget",
+        headers: { authorization: `Bearer ${accessToken}` },
+        payload: { monthlyBudgetOverrideUsd: 100 },
+      });
+
+    const results = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(await attempt());
+    }
+
+    const statusCodes = results.map((r) => r.statusCode);
+    expect(statusCodes.slice(0, 10).every((c) => c === 204)).toBe(true);
+    expect(statusCodes[10]).toBe(429);
+  });
+
+  it("throttles the unauthenticated Stripe webhook (no session to throttle by — the limit is the only bound)", async () => {
+    // Deliberately unsigned garbage: the point is that the limit engages
+    // BEFORE signature verification can even reject it, so an attacker
+    // can't use this public endpoint as an unauthenticated HMAC/DB
+    // amplifier by spamming payloads that were never going to verify.
+    const attempt = () =>
+      app.inject({
+        method: "POST",
+        url: "/billing/webhook",
+        headers: { "content-type": "application/json", "stripe-signature": "t=1,v1=deadbeef" },
+        payload: "{}",
+      });
+
+    const results = [];
+    for (let i = 0; i < 121; i++) {
+      results.push(await attempt());
+    }
+
+    const statusCodes = results.map((r) => r.statusCode);
+    // Every pre-limit request is rejected as an invalid signature (401),
+    // never processed — and the 121st is refused by the rate limiter
+    // before it reaches verification at all.
+    expect(statusCodes.slice(0, 120).every((c) => c === 401)).toBe(true);
+    expect(statusCodes[120]).toBe(429);
+  });
 });
 
 describe("security: malformed/hostile input", () => {

@@ -1,5 +1,6 @@
 import { CircuitOpenError, withCircuitBreaker, withRetry } from "@cloudmesh/circuit-breaker";
 import type { Redis } from "ioredis";
+import { recordProviderOutcome } from "./providerStats.js";
 import { env } from "../env.js";
 import { ServiceUnavailableError } from "../errors.js";
 
@@ -39,6 +40,37 @@ export async function callProviderResilient<T>(
         `${providerName} is temporarily unavailable (circuit open)`,
         env.CIRCUIT_OPEN_DURATION_MS / 1000,
       );
+    }
+    throw err;
+  }
+}
+
+/**
+ * Same as callProviderResilient, plus recording the outcome for Phase 8's
+ * routing engine (lib/routingScoring.ts reads these via
+ * lib/providerStats.ts to score candidates on real latency/reliability,
+ * not guesswork). A circuit-open short-circuit is deliberately NOT
+ * recorded as a failed attempt — no real call happened, so it carries no
+ * signal about the provider's actual current latency/success rate, and
+ * recording it as a "failure" would double-penalize an already-open
+ * circuit and pollute the success-rate stat with non-attempts.
+ * `callProviderResilient` only ever wraps a `CircuitOpenError` as
+ * `ServiceUnavailableError` (see above) — any OTHER thrown error is a
+ * genuine attempt that failed for real, so it IS recorded.
+ */
+export async function callProviderResilientWithStats<T>(
+  redis: Redis,
+  providerName: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await callProviderResilient(redis, providerName, fn);
+    await recordProviderOutcome(redis, providerName, Date.now() - start, true);
+    return result;
+  } catch (err) {
+    if (!(err instanceof ServiceUnavailableError)) {
+      await recordProviderOutcome(redis, providerName, Date.now() - start, false);
     }
     throw err;
   }
