@@ -1,7 +1,9 @@
 import { disconnectAll, getAppPrisma } from "@cloudmesh/db";
+import { connectEventBus, type EventBus } from "@cloudmesh/events";
 import { buildApp } from "./app.js";
 import { env } from "./env.js";
-import { LogEventPublisher, startOutboxPoller } from "./lib/outbox.js";
+import { NatsEventPublisher } from "./lib/natsPublisher.js";
+import { LogEventPublisher, startOutboxPoller, type EventPublisher } from "./lib/outbox.js";
 
 const app = await buildApp();
 
@@ -12,12 +14,24 @@ try {
   process.exit(1);
 }
 
-// LogEventPublisher is a placeholder — NATS JetStream (the real target) is
-// Phase 10. The poller loop and "mark published on success" bookkeeping are
-// real today; only what "publish" actually does will change later.
+// Phase 10: the outbox drains onto real NATS JetStream. Falling back to the
+// log publisher when NATS_URL is unset keeps the gateway bootable with no
+// broker running — but it's a dev convenience, not a production mode:
+// events still accumulate in the outbox table, they just aren't delivered.
+let eventBus: EventBus | undefined;
+let publisher: EventPublisher;
+if (env.NATS_URL) {
+  eventBus = await connectEventBus({ servers: env.NATS_URL, name: "cloudmesh-gateway" });
+  publisher = new NatsEventPublisher(eventBus);
+  app.log.info({ servers: env.NATS_URL }, "event bus connected");
+} else {
+  publisher = new LogEventPublisher((msg, fields) => app.log.info(fields, msg));
+  app.log.warn("NATS_URL not set — outbox events will be logged, not published");
+}
+
 const outboxPoller = startOutboxPoller(
   getAppPrisma(),
-  new LogEventPublisher((msg, fields) => app.log.info(fields, msg)),
+  publisher,
   env.OUTBOX_POLL_INTERVAL_MS,
   (err) => app.log.error(err, "outbox poll failed"),
 );
@@ -30,6 +44,9 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     outboxPoller.stop();
     app
       .close()
+      // drain() (inside close) lets in-flight publishes finish rather than
+      // dropping them — the poller has already stopped, so this is bounded.
+      .then(() => eventBus?.close())
       .then(() => disconnectAll())
       .then(
         () => process.exit(0),

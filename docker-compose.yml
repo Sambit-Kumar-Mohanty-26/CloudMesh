@@ -15,5 +15,20 @@ services:
     ports:
       - "6379:6379"
 
+  # NATS with JetStream enabled (-js). JetStream is what makes this a
+  # persisted, at-least-once bus rather than fire-and-forget core NATS —
+  # without the flag, streams can't be created at all and every publish
+  # from the outbox poller would fail. 4222 is the client port; 8222 is the
+  # HTTP monitoring endpoint, which is also the cheapest healthcheck.
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+
 volumes:
   postgres_data:
+  nats_data:

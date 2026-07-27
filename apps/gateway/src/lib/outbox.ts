@@ -1,25 +1,34 @@
 import type { Prisma, PrismaClient } from "@cloudmesh/db";
 
 /**
- * The publish side of the transactional outbox. NATS JetStream (the design
- * doc's actual target) is Phase 10 — not built yet — so this is a seam:
- * `LogEventPublisher` is the only implementation that exists today, and
- * Phase 10 swaps in a real NATS-backed one without the poller, the outbox
- * table, or the transactional-insert call site needing to change at all.
+ * The publish side of the transactional outbox. As of Phase 10 the real
+ * implementation is `NatsEventPublisher` (lib/natsPublisher.ts), backed by
+ * NATS JetStream. The interface stayed the seam it was designed to be:
+ * swapping the log stub for a real bus required no change to the poller,
+ * the outbox table, or any transactional-insert call site.
+ *
+ * `eventId` is passed so the publisher can deduplicate. It's the outbox
+ * row's own id — stable across retries, which is exactly what makes a
+ * poller retry safe: republishing an event whose ack was lost can't create
+ * a second copy downstream.
  */
 export interface EventPublisher {
-  publish(eventType: string, payload: unknown): Promise<void>;
+  publish(eventType: string, payload: unknown, eventId: string): Promise<void>;
 }
 
-/** Placeholder publisher — logs and returns, so the poller loop and the
- *  "mark published on success" bookkeeping are all real and testable today,
- *  even though nothing is actually delivered anywhere yet. Never use this
- *  in a real deployment once a real bus exists. */
+/** Log-only publisher. No longer the default (Phase 10 wired up real NATS),
+ *  but kept deliberately: it's what makes the poller's own retry/marking
+ *  logic testable without a broker, and it's a usable fallback for a local
+ *  run with no NATS container up. */
 export class LogEventPublisher implements EventPublisher {
   constructor(private readonly log: (msg: string, fields: Record<string, unknown>) => void) {}
 
-  async publish(eventType: string, payload: unknown): Promise<void> {
-    this.log("outbox: publishing (no real event bus configured yet)", { eventType, payload });
+  async publish(eventType: string, payload: unknown, eventId: string): Promise<void> {
+    this.log("outbox: publishing to log sink (no event bus configured)", {
+      eventType,
+      eventId,
+      payload,
+    });
   }
 }
 
@@ -60,7 +69,10 @@ export async function pollOutbox(
   let published = 0;
   for (const event of pending) {
     try {
-      await publisher.publish(event.eventType, event.payload);
+      // The outbox row id doubles as the event id: stable across retries,
+      // so a republish after a lost ack dedupes downstream instead of
+      // delivering the same event twice.
+      await publisher.publish(event.eventType, event.payload, event.id);
       await prisma.outboxEvent.update({
         where: { id: event.id },
         data: { publishedAt: new Date() },

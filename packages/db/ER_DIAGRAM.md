@@ -8,6 +8,7 @@ erDiagram
     ORGANIZATION ||--o{ SEMANTIC_CACHE_ENTRY : has
     ORGANIZATION ||--o{ INVOICE : has
     ORGANIZATION ||--o{ JOB : has
+    ORGANIZATION ||--o{ AUDIT_LOG : has
     API_KEY ||--o{ USAGE_RECORD : authorizes
 
     ORGANIZATION {
@@ -116,6 +117,15 @@ erDiagram
         timestamp started_at
         timestamp finished_at
     }
+
+    AUDIT_LOG {
+        uuid id PK
+        uuid org_id FK
+        text event_id UK "dedups at-least-once NATS redelivery"
+        text event_type
+        jsonb payload
+        timestamp created_at
+    }
 ```
 
 ## Notes
@@ -187,3 +197,16 @@ current_setting('app.current_org')`. Verified against a live DB
   connects as `cloudmesh_app`, never the migration superuser) — an unscoped
   read there returns zero rows rather than erroring, which is a silent
   failure mode worth knowing about.
+- **Event bus (Phase 10)**: `audit_log` is written by the NATS audit
+  subscriber and carries the same `tenant_isolation` RLS policy as every
+  other tenant table
+  (`packages/db/prisma/migrations/20260727131343_add_audit_log_phase10`).
+  Its `event_id` UNIQUE constraint is load-bearing, not decorative: NATS
+  JetStream delivers at least once, so the subscriber relies on hitting that
+  constraint (catching Prisma's P2002) to skip a redelivered event. A
+  check-then-insert would race itself when the same event reaches two
+  consumers concurrently. Like the Phase 9 job worker, the subscribers
+  consume events for every org from one process and must set
+  `app.current_org` per message; events with no `org_id` are skipped rather
+  than written unscoped. The table is append-only by convention — nothing in
+  application code updates or deletes from it.

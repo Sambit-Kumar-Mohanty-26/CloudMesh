@@ -41,6 +41,9 @@ export default defineConfig({
       // that don't exercise real contention, and a real downgrade target
       // distinct from AUTO_FALLBACK_MODELS so the two mechanisms' tests
       // can't accidentally pass for the wrong reason.
+      // Event bus (Phase 10) — real NATS from docker-compose, same as
+      // Postgres/Redis. Nothing here is mocked.
+      NATS_URL: "nats://localhost:4222",
       BILLING_LOCK_TTL_MS: "2000",
       BILLING_LOCK_RETRIES: "2",
       BILLING_LOCK_RETRY_DELAY_MS: "20",

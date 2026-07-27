@@ -73,6 +73,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # NOTE: NATS is deliberately NOT a service container. JetStream has to
+      # be enabled with the `-js` server flag, and `services:` has no way to
+      # override an image's command — only `options:`, which passes docker
+      # create flags, not args. So it's started with an explicit `docker run`
+      # step below, mirroring docker-compose.yml exactly.
     steps:
       - uses: actions/checkout@v7
 
@@ -82,6 +87,19 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # See the note in `services:` for why this isn't a service container.
+      # -js enables JetStream; without it stream creation fails outright.
+      - name: Start NATS JetStream
+        run: |
+          docker run -d --name cloudmesh-nats -p 4222:4222 -p 8222:8222 nats:2.10-alpine -js -m 8222
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8222/healthz > /dev/null; then
+              echo "NATS ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "NATS failed to become ready"; docker logs cloudmesh-nats; exit 1
 
       # migrate:deploy (not migrate:dev) — applies existing migrations
       # non-interactively, never generates a new one. This is also what
@@ -100,6 +118,9 @@ jobs:
       # status is pure DB logic, no Redis/lock involved at that layer).
       - run: npm test --workspace=@cloudmesh/auth
       - run: npm test --workspace=@cloudmesh/billing
+      # packages/events has both pure schema tests and real JetStream
+      # integration tests — hence the NATS step above.
+      - run: npm test --workspace=@cloudmesh/events
       # packages/jobs' own tests are pure (priority mapping, registry,
       # progress math) — the queue/worker itself is covered by real
       # BullMQ-backed integration tests in @cloudmesh/gateway below.

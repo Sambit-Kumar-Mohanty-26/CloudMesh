@@ -46,6 +46,7 @@ model Organization {
   semanticCache SemanticCacheEntry[]
   invoices      Invoice[]
   jobs          Job[]
+  auditLogs     AuditLog[]
 
   @@map("organizations")
 }
@@ -229,4 +230,23 @@ model Job {
   @@index([orgId, createdAt])
   @@index([orgId, status])
   @@map("jobs")
+}
+
+// Append-only audit log, written by the Phase 10 audit subscriber. Its
+// `event_id` UNIQUE constraint is what makes that subscriber safe under
+// JetStream's at-least-once delivery: a redelivered message hits the
+// constraint and is skipped instead of writing a duplicate audit entry.
+// Never updated or deleted by application code — that's what "audit" means.
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  eventId   String   @unique @map("event_id")
+  eventType String   @map("event_type")
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@map("audit_log")
 }

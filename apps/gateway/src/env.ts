@@ -114,6 +114,13 @@ const schema = z.object({
     .int()
     .positive()
     .default(5 * 60_000),
+
+  // Event bus (Phase 10). NATS JetStream is the outbox poller's real
+  // publish target. Optional on purpose: with it unset the poller falls
+  // back to the log publisher, so the gateway still boots and serves
+  // traffic with no broker running (a dev convenience — in a real
+  // deployment this must be set, or events accumulate unpublished).
+  NATS_URL: z.string().optional(),
 });
 
 export const env = schema.parse(process.env);

@@ -17,6 +17,7 @@ packages/db/                Prisma schema, migrations, shared DB client
 packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
 packages/billing/             Shared budget-status logic (getBudgetStatus) used by both apps/*
 packages/jobs/                BullMQ queue, worker pool, DLQ + replay, progress pub/sub
+packages/events/              NATS JetStream bus: event schema, publisher, durable subscribers
 packages/rate-limiter/        4 distributed rate-limiting algorithms (Redis + Lua)
 packages/circuit-breaker/      Circuit breaker (3-state, Redis + Lua) + backoff retry
 notes/                          Original project spec (read-only reference)
@@ -71,10 +72,22 @@ as you want against the same Redis; they share the queue:
 npm run worker --workspace=@cloudmesh/gateway
 ```
 
+Platform events (Phase 10) drain from the transactional outbox onto NATS
+JetStream. The four subscribers (analytics, audit, billing, notifications)
+run in their own process:
+
+```bash
+npm run consumers --workspace=@cloudmesh/gateway
+```
+
+Without `NATS_URL` set the gateway logs outbox events instead of publishing
+them (events still accumulate safely in the outbox); the consumer process
+requires it and exits without it.
+
 ## Testing
 
-Integration tests hit a real Postgres + Redis (the same `docker compose`
-stack), not mocks — make sure it's running first.
+Integration tests hit a real Postgres + Redis + NATS (the same
+`docker compose` stack), not mocks — make sure it is running first.
 
 ```bash
 npm test                       # every workspace
