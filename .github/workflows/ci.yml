@@ -100,6 +100,10 @@ jobs:
       # status is pure DB logic, no Redis/lock involved at that layer).
       - run: npm test --workspace=@cloudmesh/auth
       - run: npm test --workspace=@cloudmesh/billing
+      # packages/jobs' own tests are pure (priority mapping, registry,
+      # progress math) — the queue/worker itself is covered by real
+      # BullMQ-backed integration tests in @cloudmesh/gateway below.
+      - run: npm test --workspace=@cloudmesh/jobs
       - run: npm test --workspace=@cloudmesh/rate-limiter
       - run: npm test --workspace=@cloudmesh/circuit-breaker
       - run: npm test --workspace=@cloudmesh/api

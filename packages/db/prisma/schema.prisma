@@ -45,6 +45,7 @@ model Organization {
   usageRecords  UsageRecord[]
   semanticCache SemanticCacheEntry[]
   invoices      Invoice[]
+  jobs          Job[]
 
   @@map("organizations")
 }
@@ -178,4 +179,54 @@ model SemanticCacheEntry {
 
   @@index([orgId, model])
   @@map("semantic_cache")
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  DEAD_LETTER
+}
+
+// BullMQ (Redis) is the execution engine; this table is the authoritative,
+// tenant-scoped record of a job. Both exist on purpose: BullMQ's own job
+// state lives in Redis with no RLS and is evictable, but GET /v1/jobs/:id
+// must never leak another org's job and DLQ review needs durable history.
+// Redis holds transient execution state, Postgres holds the queryable
+// system of record — same split as Phase 7's outbox (Redis/NATS moves the
+// event, Postgres guarantees it existed).
+model Job {
+  id        String    @id @default(uuid()) @db.Uuid
+  orgId     String    @map("org_id") @db.Uuid
+  // The BullMQ job id, so a row can be tied back to its queue entry (and
+  // vice versa) for DLQ replay. Nullable only for the brief window between
+  // the row insert and the enqueue returning.
+  bullJobId String?   @map("bull_job_id")
+  type      String
+  status    JobStatus @default(QUEUED)
+  // Lower number = higher priority, matching BullMQ's own convention and
+  // the design doc's CRITICAL(1)/HIGH(5)/NORMAL(10)/LOW(20) scale.
+  priority  Int       @default(10)
+  payload   Json
+  // 0-100. Written by the worker as it progresses; also published to Redis
+  // pub/sub for the WebSocket bridge (see packages/jobs/src/progress.ts).
+  progress  Int       @default(0)
+  result    Json?
+  // Failure message only — never a raw error object, which for provider
+  // failures can echo prompt/response text (same rule as the semantic
+  // cache's catch block in apps/gateway/src/modules/chat/routes.ts).
+  error     String?
+  attempts  Int       @default(0)
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  startedAt  DateTime? @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, status])
+  @@map("jobs")
 }

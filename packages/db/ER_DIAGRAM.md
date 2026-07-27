@@ -7,6 +7,7 @@ erDiagram
     ORGANIZATION ||--o{ USAGE_RECORD : has
     ORGANIZATION ||--o{ SEMANTIC_CACHE_ENTRY : has
     ORGANIZATION ||--o{ INVOICE : has
+    ORGANIZATION ||--o{ JOB : has
     API_KEY ||--o{ USAGE_RECORD : authorizes
 
     ORGANIZATION {
@@ -98,6 +99,23 @@ erDiagram
         timestamp published_at "null = not yet published"
         timestamp created_at
     }
+
+    JOB {
+        uuid id PK
+        uuid org_id FK
+        text bull_job_id "ties row to its BullMQ queue entry"
+        text type
+        enum status "QUEUED, RUNNING, COMPLETED, FAILED, DEAD_LETTER"
+        int priority "1 CRITICAL / 5 HIGH / 10 NORMAL / 20 LOW"
+        jsonb payload
+        int progress "0-100"
+        jsonb result
+        text error
+        int attempts
+        timestamp created_at
+        timestamp started_at
+        timestamp finished_at
+    }
 ```
 
 ## Notes
@@ -155,3 +173,17 @@ current_setting('app.current_org')`. Verified against a live DB
   "unlimited"; an org's plan tier having no seeded `billing_plans` row is
   what actually means unlimited (fail-open on missing config, not
   fail-closed on every request for an org whose tier was never seeded).
+- **Async jobs (Phase 9)**: `jobs` has the same `tenant_isolation` RLS
+  policy as the other tenant tables
+  (`packages/db/prisma/migrations/20260727025749_add_jobs_phase9`). It
+  deliberately duplicates state that BullMQ already keeps in Redis, because
+  the two answer different questions: Redis holds transient execution state
+  (retries, locks, the queue itself) and is evictable with no RLS, while
+  this table is the durable, tenant-scoped system of record that
+  `GET /v1/jobs/:id` reads and that DLQ review needs after Redis has
+  dropped the finished job. Same split as Phase 7's outbox. The **worker**
+  is the reason the RLS policy matters most here: it drains jobs for every
+  org from one process, so it must set `app.current_org` per job (it
+  connects as `cloudmesh_app`, never the migration superuser) — an unscoped
+  read there returns zero rows rather than erroring, which is a silent
+  failure mode worth knowing about.

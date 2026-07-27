@@ -12,10 +12,11 @@ apps/api/                 Fastify service: auth, API key management, billing con
 apps/gateway/              Fastify service: unified /v1/chat across providers — streaming,
                              idempotency, rate limiting, circuit breaker + retry, semantic cache
                              + request dedup, budget enforcement + usage billing, intelligent
-                             routing (scoring, named presets, A/B)
+                             routing (scoring, named presets, A/B), async jobs + WebSocket progress
 packages/db/                Prisma schema, migrations, shared DB client
 packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
 packages/billing/             Shared budget-status logic (getBudgetStatus) used by both apps/*
+packages/jobs/                BullMQ queue, worker pool, DLQ + replay, progress pub/sub
 packages/rate-limiter/        4 distributed rate-limiting algorithms (Redis + Lua)
 packages/circuit-breaker/      Circuit breaker (3-state, Redis + Lua) + backoff retry
 notes/                          Original project spec (read-only reference)
@@ -60,6 +61,14 @@ curl http://localhost:3000/health
 
 npm run dev --workspace=@cloudmesh/gateway   # apps/gateway on :3001
 curl http://localhost:3001/health
+```
+
+Async jobs (Phase 9) are drained by a **separate worker process** — the API
+only enqueues, so nothing runs until at least one worker is up. Run as many
+as you want against the same Redis; they share the queue:
+
+```bash
+npm run worker --workspace=@cloudmesh/gateway
 ```
 
 ## Testing

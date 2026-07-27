@@ -102,6 +102,18 @@ const schema = z.object({
   // yet (NATS JetStream is Phase 10), so this just moves rows from
   // unpublished to published-via-LogEventPublisher on a timer.
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(500),
+
+  // Async job queue (Phase 9) — consumed by the separate worker process
+  // (src/worker.ts), not the HTTP server. Defaults are the design doc's:
+  // 10 concurrent jobs per worker, 5-minute visibility timeout (BullMQ's
+  // lockDuration — how long a job may run before an unrenewed lock lets
+  // another worker treat it as stalled and pick it up).
+  JOB_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(10),
+  JOB_LOCK_DURATION_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5 * 60_000),
 });
 
 export const env = schema.parse(process.env);

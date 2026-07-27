@@ -8,14 +8,18 @@
     "start": "tsx --env-file=.env src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "worker": "tsx --env-file=.env src/worker.ts"
   },
   "dependencies": {
     "@cloudmesh/auth": "*",
     "@cloudmesh/billing": "*",
     "@cloudmesh/circuit-breaker": "*",
     "@cloudmesh/db": "*",
+    "@cloudmesh/jobs": "*",
     "@cloudmesh/rate-limiter": "*",
+    "@fastify/websocket": "^11.3.0",
+    "bullmq": "^5.81.2",
     "fastify": "^5.1.0",
     "fastify-plugin": "^6.0.0",
     "ioredis": "^5.4.1",
