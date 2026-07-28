@@ -1,5 +1,6 @@
 import { apiKeyCacheKey, generateApiKey, hashApiKey } from "@cloudmesh/auth";
 import { Prisma, withTenant, type PrismaClient } from "@cloudmesh/db";
+import { writeOutboxEvent } from "@cloudmesh/outbox";
 import type { Redis } from "ioredis";
 import { NotFoundError } from "../../errors.js";
 
@@ -24,8 +25,8 @@ export async function createApiKey(
   const { rawKey, keyPrefix } = generateApiKey();
   const keyHash = hashApiKey(rawKey);
 
-  const created = await withTenant(db, orgId, (tx) =>
-    tx.apiKey.create({
+  const created = await withTenant(db, orgId, async (tx) => {
+    const key = await tx.apiKey.create({
       data: {
         orgId,
         keyHash,
@@ -33,8 +34,17 @@ export async function createApiKey(
         scopes: input.scopes,
         rateLimitRpm: input.rateLimitRpm ?? 60,
       },
-    }),
-  );
+    });
+    // Phase 11: `api_key.created`, atomic with the row it describes —
+    // never the raw key itself, only the prefix, matching everywhere else
+    // in this codebase that a key is displayed after creation.
+    await writeOutboxEvent(tx, "api_key.created", {
+      orgId,
+      apiKeyId: key.id,
+      keyPrefix: key.keyPrefix,
+    });
+    return key;
+  });
 
   // rawKey is returned exactly once, here — it is never retrievable again,
   // since only its hash is persisted.
@@ -90,12 +100,21 @@ export async function revokeApiKey(
     // transaction, so a cross-tenant id matches zero rows and Prisma
     // throws P2025 — the tenant boundary is enforced by Postgres here,
     // not by an orgId filter in this query.
-    revoked = await withTenant(db, orgId, (tx) =>
-      tx.apiKey.update({
+    revoked = await withTenant(db, orgId, async (tx) => {
+      const key = await tx.apiKey.update({
         where: { id: keyId },
         data: { isActive: false },
-      }),
-    );
+      });
+      // Phase 11: `api_key.revoked`, atomic with the deactivation itself —
+      // an org's subscribed audit/notification tooling must never see this
+      // event fire without the key actually having stopped working.
+      await writeOutboxEvent(tx, "api_key.revoked", {
+        orgId,
+        apiKeyId: key.id,
+        keyPrefix: key.keyPrefix,
+      });
+      return key;
+    });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
       // Same response whether the key belongs to another org or doesn't

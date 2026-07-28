@@ -47,6 +47,9 @@ model Organization {
   invoices      Invoice[]
   jobs          Job[]
   auditLogs     AuditLog[]
+  webhookEndpoints WebhookEndpoint[]
+  webhookEvents    WebhookEvent[]
+  webhookDeliveries WebhookDelivery[]
 
   @@map("organizations")
 }
@@ -249,4 +252,85 @@ model AuditLog {
 
   @@index([orgId, createdAt])
   @@map("audit_log")
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+  EXHAUSTED
+}
+
+// An org's registered delivery target. `secret` is stored in plaintext —
+// unlike a password or API key (which only ever need COMPARING, so are
+// hashed), an HMAC signing secret must be reproduced byte-for-byte on every
+// delivery, so it cannot be a one-way hash. It is generated server-side
+// (never chosen by the org) and shown once at creation, same convention as
+// an API key's raw value.
+model WebhookEndpoint {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  url       String
+  secret    String
+  // Which event types this endpoint receives — see EVENT_TYPES in
+  // packages/webhooks. An empty array is rejected at registration, not
+  // stored, since an endpoint subscribed to nothing would never fire.
+  eventTypes String[] @map("event_types")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([orgId])
+  @@map("webhook_endpoints")
+}
+
+// Durable record of a platform event that matters for webhooks — the
+// design doc's `webhook_events` table. Deliberately separate from Phase
+// 10's `audit_log` (which records every bus event unconditionally): this
+// table only holds events actually relevant to webhook fan-out, and each
+// row is the parent of N `webhook_deliveries` rows (one per subscribed,
+// active endpoint at dispatch time).
+model WebhookEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String   @map("org_id") @db.Uuid
+  eventType String   @map("event_type")
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organization Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  deliveries   WebhookDelivery[]
+
+  @@index([orgId, createdAt])
+  @@map("webhook_events")
+}
+
+// One row per (endpoint, event) delivery attempt series — the design doc's
+// delivery log. `orgId` is denormalized from the endpoint/event (both
+// already scope to the same org) purely so RLS and queries don't need a
+// join to enforce tenant isolation.
+model WebhookDelivery {
+  id                String                @id @default(uuid()) @db.Uuid
+  orgId             String                @map("org_id") @db.Uuid
+  webhookEndpointId String                @map("webhook_endpoint_id") @db.Uuid
+  webhookEventId    String                @map("webhook_event_id") @db.Uuid
+  status            WebhookDeliveryStatus @default(PENDING)
+  attempts          Int                   @default(0)
+  // Truncated at write time (see packages/webhooks) — an org's own endpoint
+  // can return an arbitrarily large body, and this is diagnostic data, not
+  // something that needs to be stored in full.
+  responseStatus    Int?                  @map("response_status")
+  responseBody      String?               @map("response_body")
+  lastAttemptAt     DateTime?             @map("last_attempt_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+
+  organization    Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  webhookEndpoint WebhookEndpoint @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+  webhookEvent    WebhookEvent    @relation(fields: [webhookEventId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([webhookEndpointId])
+  @@map("webhook_deliveries")
 }

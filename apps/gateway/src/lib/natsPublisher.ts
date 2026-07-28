@@ -1,5 +1,5 @@
 import type { EventBus } from "@cloudmesh/events";
-import type { EventPublisher } from "./outbox.js";
+import type { EventPublisher } from "@cloudmesh/outbox";
 
 /**
  * The real Phase 10 publisher: drains the Phase 7 transactional outbox onto

@@ -6,16 +6,18 @@ import {
   type EventBus,
   type Subscription,
 } from "@cloudmesh/events";
+import { createWebhookQueue } from "@cloudmesh/webhooks";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { NatsEventPublisher } from "../../src/lib/natsPublisher.js";
-import { pollOutbox, writeOutboxEvent } from "../../src/lib/outbox.js";
+import { pollOutbox, writeOutboxEvent } from "@cloudmesh/outbox";
 import {
   getDailyAnalytics,
   startAnalyticsSubscriber,
   startAuditSubscriber,
   startBillingSubscriber,
-  startNotificationSubscriber,
+  startEmailSubscriber,
+  startWebhookDispatchSubscriber,
 } from "../../src/modules/events/subscribers.js";
 
 const admin = getAdminPrisma();
@@ -256,54 +258,160 @@ describe("event bus wiring (Phase 10)", () => {
     });
   });
 
-  describe("notification subscriber", () => {
-    it("fires on a budget warning, and not on ordinary usage", async () => {
+  describe("webhook dispatch subscriber", () => {
+    it("creates a WebhookEvent and enqueues a delivery for each subscribed endpoint", async () => {
       const orgId = await createOrg();
-      const notified: Array<{ kind: string }> = [];
+      const queue = createWebhookQueue(redis);
+      await withTenant(admin, orgId, (tx) =>
+        tx.webhookEndpoint.create({
+          data: {
+            orgId,
+            url: "https://example.test/hook",
+            secret: "whsec_test",
+            eventTypes: ["budget.warning"],
+          },
+        }),
+      );
       subs.push(
-        await startNotificationSubscriber({
+        await startWebhookDispatchSubscriber({
           bus,
           db: admin,
           redis,
           onError: () => undefined,
-          notify: async (e) => {
-            notified.push({ kind: e.kind });
-          },
+          webhookQueue: queue,
         }),
       );
 
-      await bus.publish("usage.recorded", usagePayload(orgId), randomUUID());
       await bus.publish(
         "budget.warning",
         { orgId, spentUsd: 9.1, budgetUsd: 10, remainingFraction: 0.09 },
         randomUUID(),
       );
 
-      const got = await eventually(async () => (notified.length > 0 ? notified : undefined));
-      expect(got).toEqual([{ kind: "budget.warning" }]);
+      const event = await eventually(async () => {
+        const found = await admin.webhookEvent.findFirst({
+          where: { orgId, eventType: "budget.warning" },
+        });
+        return found ?? undefined;
+      });
+      const delivery = await eventually(async () => {
+        const found = await admin.webhookDelivery.findFirst({
+          where: { webhookEventId: event.id },
+        });
+        return found ?? undefined;
+      });
+      expect(delivery.status).toBe("PENDING");
+
+      await queue.close();
+    });
+
+    it("ignores event types that aren't webhook-eligible", async () => {
+      const orgId = await createOrg();
+      const queue = createWebhookQueue(redis);
+      subs.push(
+        await startWebhookDispatchSubscriber({
+          bus,
+          db: admin,
+          redis,
+          onError: () => undefined,
+          webhookQueue: queue,
+        }),
+      );
+
+      await bus.publish("usage.recorded", usagePayload(orgId), randomUUID());
+      await new Promise((r) => setTimeout(r, 800));
+
+      expect(await admin.webhookEvent.count({ where: { orgId } })).toBe(0);
+      await queue.close();
+    });
+  });
+
+  describe("email subscriber", () => {
+    it("emails the org owner on a webhook-eligible event", async () => {
+      const orgId = await createOrg();
+      await admin.user.create({
+        data: { orgId, email: "owner@org.test", passwordHash: "x", role: "OWNER" },
+      });
+      const sent: Array<{ to: string; subject: string }> = [];
+      subs.push(
+        await startEmailSubscriber({
+          bus,
+          db: admin,
+          redis,
+          onError: () => undefined,
+          sendEmail: async (input) => {
+            sent.push(input);
+          },
+        }),
+      );
+
+      await bus.publish(
+        "budget.warning",
+        { orgId, spentUsd: 9.1, budgetUsd: 10, remainingFraction: 0.09 },
+        randomUUID(),
+      );
+
+      const got = await eventually(async () => (sent.length > 0 ? sent : undefined));
+      expect(got[0]!.to).toBe("owner@org.test");
+    });
+
+    it("does not email on an event type with no subject mapping", async () => {
+      const orgId = await createOrg();
+      await admin.user.create({
+        data: { orgId, email: "owner@org.test", passwordHash: "x", role: "OWNER" },
+      });
+      const sent: unknown[] = [];
+      subs.push(
+        await startEmailSubscriber({
+          bus,
+          db: admin,
+          redis,
+          onError: () => undefined,
+          sendEmail: async (input) => {
+            sent.push(input);
+          },
+        }),
+      );
+
+      await bus.publish("usage.recorded", usagePayload(orgId), randomUUID());
+      await new Promise((r) => setTimeout(r, 800));
+
+      expect(sent).toEqual([]);
     });
   });
 
   describe("fan-out", () => {
     it("delivers one event to every interested subscriber independently", async () => {
       const orgId = await createOrg();
-      const notified: unknown[] = [];
+      await admin.user.create({
+        data: { orgId, email: "owner@org.test", passwordHash: "x", role: "OWNER" },
+      });
+      const queue = createWebhookQueue(redis);
+      const sent: unknown[] = [];
       subs.push(
         await startAnalyticsSubscriber({ bus, db: admin, redis, onError: () => undefined }),
         await startAuditSubscriber({ bus, db: admin, redis, onError: () => undefined }),
-        await startNotificationSubscriber({
+        await startWebhookDispatchSubscriber({
           bus,
           db: admin,
           redis,
           onError: () => undefined,
-          notify: async (e) => {
-            notified.push(e);
+          webhookQueue: queue,
+        }),
+        await startEmailSubscriber({
+          bus,
+          db: admin,
+          redis,
+          onError: () => undefined,
+          sendEmail: async (input) => {
+            sent.push(input);
           },
         }),
       );
 
-      // budget.warning is audited AND notified; usage.recorded is audited
-      // AND counted by analytics. One publish each, three consumers.
+      // budget.warning is audited, dispatched to webhooks, AND emailed;
+      // usage.recorded is audited AND counted by analytics. One publish
+      // each, four consumers.
       await bus.publish("usage.recorded", usagePayload(orgId), randomUUID());
       await bus.publish(
         "budget.warning",
@@ -319,7 +427,13 @@ describe("event bus wiring (Phase 10)", () => {
         const s = await getDailyAnalytics(redis, orgId);
         return s.requests === 1 ? s : undefined;
       });
-      await eventually(async () => (notified.length === 1 ? notified : undefined));
+      await eventually(async () => {
+        const count = await admin.webhookEvent.count({ where: { orgId } });
+        return count === 1 ? count : undefined;
+      });
+      await eventually(async () => (sent.length === 1 ? sent : undefined));
+
+      await queue.close();
     });
   });
 });

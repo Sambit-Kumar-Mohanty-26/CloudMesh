@@ -121,6 +121,21 @@ const schema = z.object({
   // traffic with no broker running (a dev convenience — in a real
   // deployment this must be set, or events accumulate unpublished).
   NATS_URL: z.string().optional(),
+
+  // Webhooks (Phase 11) — the delivery worker and dispatch consumer are
+  // separate entry points (see src/webhookWorker.ts, src/consumers.ts),
+  // both driven off the same Redis queue this URL isn't part of; nothing
+  // here is enforced at env-schema level beyond the DB/Redis this service
+  // already requires.
+
+  // Email (Phase 11) — Resend, for job completions/budget warnings/API key
+  // events. Optional, same "no live credentials in this environment" rule
+  // as every other provider: unconfigured means the email subscriber's
+  // sends fail individually (logged, swallowed) rather than blocking
+  // consumer startup.
+  RESEND_API_KEY: z.string().optional(),
+  RESEND_BASE_URL: z.string().url().default("https://api.resend.com"),
+  RESEND_FROM_EMAIL: z.string().default("alerts@cloudmesh.dev"),
 });
 
 export const env = schema.parse(process.env);

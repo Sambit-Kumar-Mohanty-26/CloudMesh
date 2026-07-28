@@ -1,9 +1,9 @@
 import { disconnectAll, getAppPrisma } from "@cloudmesh/db";
 import { connectEventBus, type EventBus } from "@cloudmesh/events";
+import { LogEventPublisher, startOutboxPoller, type EventPublisher } from "@cloudmesh/outbox";
 import { buildApp } from "./app.js";
 import { env } from "./env.js";
 import { NatsEventPublisher } from "./lib/natsPublisher.js";
-import { LogEventPublisher, startOutboxPoller, type EventPublisher } from "./lib/outbox.js";
 
 const app = await buildApp();
 

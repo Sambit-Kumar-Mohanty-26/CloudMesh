@@ -1,30 +1,32 @@
 import { disconnectAll, getAppPrisma } from "@cloudmesh/db";
 import { connectEventBus, type Subscription } from "@cloudmesh/events";
+import { createWebhookQueue } from "@cloudmesh/webhooks";
 import { Redis } from "ioredis";
 import { env } from "./env.js";
+import { ResendAdapter } from "./providers/resend.js";
 import {
   startAnalyticsSubscriber,
   startAuditSubscriber,
   startBillingSubscriber,
-  startNotificationSubscriber,
+  startEmailSubscriber,
+  startWebhookDispatchSubscriber,
 } from "./modules/events/subscribers.js";
 
 /**
  * Event consumer process — a third entry point alongside server.ts (HTTP)
- * and worker.ts (jobs).
+ * and worker.ts (jobs). Phase 11 adds a fourth: webhookWorker.ts, the
+ * separate process that actually drains and delivers the webhook queue
+ * this file's dispatch subscriber only ENQUEUES to.
  *
- * All four subscribers run here rather than as four separate deployables.
+ * All five subscribers run here rather than as five separate deployables.
  * They're independent NATS consumers with their own durables, so the
- * decoupling the design doc cares about (one subscriber failing doesn't
- * affect the others, each resumes from its own position) is a property of
- * the durable consumers, not of the process boundary. Splitting them into
- * four services is a deployment decision this project doesn't need yet, and
- * would quadruple the connection/DB-pool overhead for no isolation gain at
- * this scale.
+ * decoupling the design doc cares about (one subscriber failing or
+ * lagging without affecting the others, each resuming from its own
+ * position) is a property of the durable consumers, not the process
+ * boundary. Splitting into five services is a deployment decision that
+ * would quadruple connection/pool overhead for no isolation gain at this
+ * scale.
  */
-// Unlike the gateway (which degrades to a log publisher), a consumer
-// process with no bus to consume from has nothing to do — failing loudly at
-// startup beats running as a silent no-op that looks healthy.
 const natsUrl = env.NATS_URL;
 if (!natsUrl) {
   console.error("[consumers] NATS_URL is required to run event consumers");
@@ -34,6 +36,12 @@ if (!natsUrl) {
 const redis = new Redis(env.REDIS_URL);
 const db = getAppPrisma();
 const bus = await connectEventBus({ servers: natsUrl, name: "cloudmesh-consumers" });
+const webhookQueue = createWebhookQueue(redis);
+const resend = new ResendAdapter({
+  apiKey: env.RESEND_API_KEY,
+  baseUrl: env.RESEND_BASE_URL,
+  fromEmail: env.RESEND_FROM_EMAIL,
+});
 
 const onError = (err: unknown) => {
   // Only the error's class name — event payloads can carry tenant data, and
@@ -52,14 +60,14 @@ const subscriptions: Subscription[] = [
   // acks (keeping its durable position current) without reporting. Wiring
   // the real call is a one-line injection once a Stripe key exists.
   await startBillingSubscriber(deps),
-  await startNotificationSubscriber({
+  await startWebhookDispatchSubscriber({ ...deps, webhookQueue }),
+  await startEmailSubscriber({
     ...deps,
-    notify: async (event) => {
-      // Delivery (signed webhooks / email) is Phase 11, including the SSRF
-      // validation org-supplied URLs require. Logging the decision keeps
-      // this consumer real without building half a delivery system.
-      console.warn(`[consumers] notification: ${event.kind} for org ${event.orgId}`);
-    },
+    sendEmail: (input) =>
+      resend
+        .sendEmail(input)
+        .catch((err: unknown) => onError(err)) // unconfigured/failed send never blocks the subscriber
+        .then(() => undefined),
   }),
 ];
 
@@ -71,6 +79,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     // messages get redelivered later even though they were fully handled.
     Promise.all(subscriptions.map((s) => s.stop()))
       .then(() => bus.close())
+      .then(() => webhookQueue.close())
       .then(() => redis.quit())
       .then(() => disconnectAll())
       .then(

@@ -7,6 +7,8 @@ import {
   type Subscription,
 } from "@cloudmesh/events";
 import { subscribe } from "@cloudmesh/events";
+import { dispatchWebhookEvent, isWebhookEventType, type WebhookJobData } from "@cloudmesh/webhooks";
+import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 
 /**
@@ -192,30 +194,92 @@ export async function startBillingSubscriber(deps: BillingSubscriberDeps): Promi
 }
 
 /**
- * Notifications — reacts to events a human should hear about.
+ * Webhook dispatch — Phase 11's real implementation of what Phase 10's
+ * placeholder notification subscriber deferred: "decides, does not
+ * deliver" becomes "decides AND delivers, safely." Fans each of the six
+ * real webhook-eligible event types out to every active, subscribed
+ * `webhook_endpoint` for that org (see `@cloudmesh/webhooks`'
+ * `dispatchWebhookEvent` for the SSRF-guarded, HMAC-signed, retried HTTP
+ * delivery itself — this subscriber only decides WHICH events matter and
+ * hands them off).
  *
- * Scoped to *deciding* what warrants a notification and recording it;
- * actual delivery (HMAC-signed webhooks, email) is Phase 11's whole
- * subject, including the SSRF validation that outbound delivery to
- * org-supplied URLs requires. Wiring real outbound HTTP here without that
- * validation would be the exact vulnerability Phase 11 exists to prevent,
- * so this stops at the seam rather than half-building it.
+ * Subscribes to the wildcard rather than one subject per event type so
+ * adding a new webhook-eligible event type later doesn't mean touching
+ * this subscriber's wiring — `isWebhookEventType` is the single gate that
+ * decides what actually gets dispatched.
  */
-export interface NotificationSubscriberDeps extends SubscriberDeps {
-  notify: (event: { orgId: string; kind: string; detail: unknown }) => Promise<void>;
+export interface WebhookDispatchDeps extends SubscriberDeps {
+  webhookQueue: Queue<WebhookJobData>;
 }
 
-export async function startNotificationSubscriber(
-  deps: NotificationSubscriberDeps,
+export async function startWebhookDispatchSubscriber(
+  deps: WebhookDispatchDeps,
 ): Promise<Subscription> {
   return subscribe(deps.bus, {
-    durable: "notification_service",
-    filterSubject: subjectFor("budget.warning"),
+    durable: "webhook_dispatch_service",
+    filterSubject: "cloudmesh.>",
     onError: deps.onError,
     handler: async (payload, envelope) => {
+      if (!isWebhookEventType(envelope.eventType)) return;
       const orgId = (payload as { orgId?: string }).orgId;
       if (!orgId) return;
-      await deps.notify({ orgId, kind: envelope.eventType, detail: payload });
+      await dispatchWebhookEvent(deps.db, deps.webhookQueue, orgId, envelope.eventType, payload);
+    },
+  });
+}
+
+/**
+ * Email — the design doc's "Email notifications via Resend for job
+ * completions, budget warnings, and API key events," which is exactly the
+ * same six-event-type set the webhook dispatcher above acts on. A
+ * deliberately coarse-grained recipient choice: the org's OWNER, not every
+ * member — there's no per-user notification-preference system in this
+ * schema, and emailing every member for every job completion would be
+ * unusable noise for anything but the smallest orgs. A real preference
+ * system is future scope, not something this phase's deliverable list
+ * calls for.
+ *
+ * `sendEmail` is injected (defaults to a no-op) rather than importing
+ * ResendAdapter directly, so a send failure — or Resend being unconfigured
+ * entirely, the common case in this environment — never takes down the
+ * subscriber; it's caught by `subscribe`'s own error handling exactly like
+ * any other handler failure (nak, retried on redelivery).
+ */
+export interface EmailSubscriberDeps extends SubscriberDeps {
+  sendEmail: (input: { to: string; subject: string; html: string }) => Promise<void>;
+}
+
+const EMAIL_SUBJECTS: Record<string, (payload: Record<string, unknown>) => string> = {
+  "job.completed": (p) => `Job ${p.jobId} completed`,
+  "job.failed": (p) => `Job ${p.jobId} failed`,
+  "budget.warning": (p) =>
+    `Budget warning: ${Math.round(Number(p.remainingFraction) * 100)}% remaining`,
+  "budget.exceeded": () => "Monthly budget exceeded",
+  "api_key.created": (p) => `New API key created (${p.keyPrefix})`,
+  "api_key.revoked": (p) => `API key revoked (${p.keyPrefix})`,
+};
+
+export async function startEmailSubscriber(deps: EmailSubscriberDeps): Promise<Subscription> {
+  return subscribe(deps.bus, {
+    durable: "email_service",
+    filterSubject: "cloudmesh.>",
+    onError: deps.onError,
+    handler: async (payload, envelope) => {
+      const subjectFn = EMAIL_SUBJECTS[envelope.eventType];
+      if (!subjectFn) return;
+      const orgId = (payload as { orgId?: string }).orgId;
+      if (!orgId) return;
+
+      const owner = await withTenant(deps.db, orgId, (tx) =>
+        tx.user.findFirst({ where: { orgId, role: "OWNER" }, select: { email: true } }),
+      );
+      if (!owner) return; // no owner on record — nothing to send to
+
+      await deps.sendEmail({
+        to: owner.email,
+        subject: subjectFn(payload as Record<string, unknown>),
+        html: `<p>${envelope.eventType}</p><pre>${JSON.stringify(payload, null, 2)}</pre>`,
+      });
     },
   });
 }

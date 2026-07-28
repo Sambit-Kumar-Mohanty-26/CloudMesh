@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "worker": "tsx --env-file=.env src/worker.ts",
-    "consumers": "tsx --env-file=.env src/consumers.ts"
+    "consumers": "tsx --env-file=.env src/consumers.ts",
+    "webhook-worker": "tsx --env-file=.env src/webhookWorker.ts"
   },
   "dependencies": {
     "@cloudmesh/auth": "*",
@@ -19,7 +20,9 @@
     "@cloudmesh/db": "*",
     "@cloudmesh/events": "*",
     "@cloudmesh/jobs": "*",
+    "@cloudmesh/outbox": "*",
     "@cloudmesh/rate-limiter": "*",
+    "@cloudmesh/webhooks": "*",
     "@fastify/websocket": "^11.3.0",
     "bullmq": "^5.81.2",
     "fastify": "^5.1.0",

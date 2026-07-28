@@ -9,7 +9,7 @@ import { getAdminPrisma } from "./client.js";
 export async function resetDatabase(): Promise<void> {
   const prisma = getAdminPrisma();
   await prisma.$executeRawUnsafe(
-    `TRUNCATE TABLE "usage_records", "semantic_cache", "api_keys", "users", "organizations", "billing_plans", "invoices", "stripe_events", "outbox_events", "jobs", "audit_log" RESTART IDENTITY CASCADE;`,
+    `TRUNCATE TABLE "usage_records", "semantic_cache", "api_keys", "users", "organizations", "billing_plans", "invoices", "stripe_events", "outbox_events", "jobs", "audit_log", "webhook_deliveries", "webhook_events", "webhook_endpoints" RESTART IDENTITY CASCADE;`,
   );
 }
 

@@ -1,11 +1,18 @@
 import type { Prisma, PrismaClient } from "@cloudmesh/db";
 
 /**
- * The publish side of the transactional outbox. As of Phase 10 the real
- * implementation is `NatsEventPublisher` (lib/natsPublisher.ts), backed by
- * NATS JetStream. The interface stayed the seam it was designed to be:
- * swapping the log stub for a real bus required no change to the poller,
- * the outbox table, or any transactional-insert call site.
+ * The publish side of the transactional outbox. Originally built in
+ * apps/gateway (Phase 7) and moved here in Phase 11 when apps/api needed
+ * `writeOutboxEvent` too (api_key.created/api_key.revoked) — same rationale
+ * as packages/billing's extraction: this logic exists in exactly one place
+ * so the two services can't drift.
+ *
+ * `NatsEventPublisher` (apps/gateway/src/lib/natsPublisher.ts), backed by
+ * NATS JetStream, is the real Phase 10 implementation. The interface has
+ * stayed the seam it was designed to be since Phase 7: swapping the log
+ * stub for a real bus required no change to the poller, the outbox table,
+ * or any transactional-insert call site — and moving the interface itself
+ * to a shared package required no change either.
  *
  * `eventId` is passed so the publisher can deduplicate. It's the outbox
  * row's own id — stable across retries, which is exactly what makes a
@@ -16,10 +23,10 @@ export interface EventPublisher {
   publish(eventType: string, payload: unknown, eventId: string): Promise<void>;
 }
 
-/** Log-only publisher. No longer the default (Phase 10 wired up real NATS),
- *  but kept deliberately: it's what makes the poller's own retry/marking
- *  logic testable without a broker, and it's a usable fallback for a local
- *  run with no NATS container up. */
+/** Log-only publisher. Not the default in a real deployment (NATS is), but
+ *  kept deliberately: it's what makes the poller's own retry/marking logic
+ *  testable without a broker, and it's a usable fallback for a local run
+ *  with no NATS container up. */
 export class LogEventPublisher implements EventPublisher {
   constructor(private readonly log: (msg: string, fields: Record<string, unknown>) => void) {}
 
@@ -33,10 +40,12 @@ export class LogEventPublisher implements EventPublisher {
 }
 
 /** Writes the outbox row as part of an existing transaction — this is what
- *  makes the pattern transactional: the caller's own INSERT (usage_records,
- *  in Phase 7's case) and this row commit or roll back together. Must be
- *  called with the same `tx` the caller's other writes use, never a fresh
- *  top-level `db` call. */
+ *  makes the pattern transactional: the caller's own INSERT (usage_records
+ *  in Phase 7's case, api_keys in Phase 11's) and this row commit or roll
+ *  back together. Must be called with the same `tx` the caller's other
+ *  writes use, never a fresh top-level `db` call — and, for a tenant-scoped
+ *  caller, that `tx` must come from `withTenant` so this insert runs under
+ *  the same RLS-scoped transaction. */
 export async function writeOutboxEvent(
   tx: Prisma.TransactionClient,
   eventType: string,
@@ -52,9 +61,11 @@ export interface PollResult {
 
 /** Reads unpublished events (oldest first) and attempts to publish each.
  *  A publish failure leaves that row unpublished for the next poll —
- *  at-least-once delivery, matching the design doc; the publisher (or a
- *  future real one) is responsible for making its own writes idempotent on
- *  redelivery, not this poller. */
+ *  at-least-once delivery, matching the design doc; the publisher is
+ *  responsible for making its own writes idempotent on redelivery, not
+ *  this poller. Only ever called from apps/gateway's poller — apps/api
+ *  writes to the same shared outbox_events table (same Postgres database)
+ *  but does not poll it, avoiding two processes racing the same batch. */
 export async function pollOutbox(
   prisma: PrismaClient,
   publisher: EventPublisher,

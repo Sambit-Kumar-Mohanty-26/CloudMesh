@@ -1,5 +1,5 @@
 {
-  "name": "@cloudmesh/jobs",
+  "name": "@cloudmesh/webhooks",
   "private": true,
   "version": "0.0.0",
   "main": "./src/index.ts",
@@ -10,12 +10,12 @@
   },
   "dependencies": {
     "@cloudmesh/db": "*",
-    "@cloudmesh/outbox": "*",
     "bullmq": "^5.81.2",
     "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
+    "undici": "^7.2.0",
     "vitest": "^2.1.4"
   }
 }

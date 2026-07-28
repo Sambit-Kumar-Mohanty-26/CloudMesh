@@ -1,4 +1,5 @@
 import { withTenant, type JobStatus, type PrismaClient } from "@cloudmesh/db";
+import { writeOutboxEvent } from "@cloudmesh/outbox";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
 import { normalizeProgress, publishJobProgress } from "./progress.js";
@@ -140,9 +141,9 @@ export async function markJobCompleted(
   orgId: string,
   result: unknown,
 ): Promise<void> {
-  await withTenant(db, orgId, (tx) =>
-    tx.job.updateMany({
-      where: { id: jobRecordId, orgId },
+  await withTenant(db, orgId, async (tx) => {
+    const job = await tx.job.update({
+      where: { id: jobRecordId },
       data: {
         status: "COMPLETED",
         progress: 100,
@@ -150,8 +151,12 @@ export async function markJobCompleted(
         finishedAt: new Date(),
         error: null,
       },
-    }),
-  );
+      select: { type: true },
+    });
+    // Phase 11: `job.completed`, in the same transaction as the status
+    // write it describes — same reasoning as Phase 7's usage.recorded.
+    await writeOutboxEvent(tx, "job.completed", { orgId, jobId: jobRecordId, type: job.type });
+  });
   await publishJobProgress(redis, { jobId: jobRecordId, progress: 100, status: "COMPLETED" });
 }
 
@@ -171,12 +176,30 @@ export async function markJobFailed(
   isFinalAttempt: boolean,
 ): Promise<void> {
   const status: JobStatus = isFinalAttempt ? "DEAD_LETTER" : "FAILED";
-  await withTenant(db, orgId, (tx) =>
-    tx.job.updateMany({
+  await withTenant(db, orgId, async (tx) => {
+    const result = await tx.job.updateMany({
       where: { id: jobRecordId, orgId },
       data: { status, error: message, ...(isFinalAttempt ? { finishedAt: new Date() } : {}) },
-    }),
-  );
+    });
+    // Phase 11: `job.failed` is only published on the terminal DEAD_LETTER
+    // transition, not every intermediate FAILED-then-retried attempt — an
+    // org subscribed to this event wants to know their job is truly dead,
+    // not to get paged once per retry.
+    if (isFinalAttempt && result.count > 0) {
+      const job = await tx.job.findFirst({
+        where: { id: jobRecordId, orgId },
+        select: { type: true },
+      });
+      if (job) {
+        await writeOutboxEvent(tx, "job.failed", {
+          orgId,
+          jobId: jobRecordId,
+          type: job.type,
+          error: message,
+        });
+      }
+    }
+  });
   await publishJobProgress(redis, { jobId: jobRecordId, progress: 0, status, error: message });
 }
 

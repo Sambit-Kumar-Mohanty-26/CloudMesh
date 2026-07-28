@@ -9,6 +9,11 @@ erDiagram
     ORGANIZATION ||--o{ INVOICE : has
     ORGANIZATION ||--o{ JOB : has
     ORGANIZATION ||--o{ AUDIT_LOG : has
+    ORGANIZATION ||--o{ WEBHOOK_ENDPOINT : has
+    ORGANIZATION ||--o{ WEBHOOK_EVENT : has
+    ORGANIZATION ||--o{ WEBHOOK_DELIVERY : has
+    WEBHOOK_ENDPOINT ||--o{ WEBHOOK_DELIVERY : receives
+    WEBHOOK_EVENT ||--o{ WEBHOOK_DELIVERY : triggers
     API_KEY ||--o{ USAGE_RECORD : authorizes
 
     ORGANIZATION {
@@ -126,6 +131,38 @@ erDiagram
         jsonb payload
         timestamp created_at
     }
+
+    WEBHOOK_ENDPOINT {
+        uuid id PK
+        uuid org_id FK
+        text url
+        text secret "plaintext — HMAC signing key, not a password"
+        text_array event_types
+        bool is_active
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    WEBHOOK_EVENT {
+        uuid id PK
+        uuid org_id FK
+        text event_type
+        jsonb payload
+        timestamp created_at
+    }
+
+    WEBHOOK_DELIVERY {
+        uuid id PK
+        uuid org_id FK "denormalized — RLS + query convenience"
+        uuid webhook_endpoint_id FK
+        uuid webhook_event_id FK
+        enum status "PENDING, DELIVERED, FAILED, EXHAUSTED"
+        int attempts
+        int response_status
+        text response_body "truncated to 2000 chars"
+        timestamp last_attempt_at
+        timestamp created_at
+    }
 ```
 
 ## Notes
@@ -210,3 +247,26 @@ current_setting('app.current_org')`. Verified against a live DB
   `app.current_org` per message; events with no `org_id` are skipped rather
   than written unscoped. The table is append-only by convention — nothing in
   application code updates or deletes from it.
+- **Webhooks (Phase 11)**: `webhook_endpoints`, `webhook_events`, and
+  `webhook_deliveries` all carry the same `tenant_isolation` RLS policy as
+  every other tenant table
+  (`packages/db/prisma/migrations/20260727142228_add_webhooks_phase11`).
+  `webhook_endpoints.secret` is stored **plaintext**, deliberately — unlike
+  a password, it isn't compared, it's used as an HMAC-SHA256 signing key on
+  every delivery, which requires the raw value at send time, not a one-way
+  hash of it. RLS is the load-bearing control here: a leaked row would let
+  an attacker forge signed payloads to that one endpoint, so cross-tenant
+  read access to this table is exactly the failure RLS exists to prevent.
+  `webhook_deliveries.org_id` is denormalized (also derivable via its
+  `webhook_endpoint_id`/`webhook_event_id` FKs) for the same reason
+  `usage_records.org_id` isn't derived through `api_keys` — RLS policies and
+  hot-path queries both need `org_id` directly on the row being filtered,
+  not through a join. `webhook_events` is written unconditionally on
+  dispatch (Phase 11's "event sourcing for all platform events"
+  deliverable), even for an org with zero subscribed endpoints — the event
+  still happened and is durably recorded; it just produces zero
+  `webhook_deliveries` rows. See `packages/webhooks` for the SSRF guard,
+  HMAC signing, and BullMQ delivery queue/worker built on top of these
+  tables, and CLAUDE.md's Phase 11 notes for why the SSRF check runs twice
+  (registration **and** every delivery attempt — DNS can rebind in
+  between).

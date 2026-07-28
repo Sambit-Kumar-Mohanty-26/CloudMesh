@@ -3,7 +3,7 @@ import { currentPeriodKey, getBudgetStatus, type BudgetStatus } from "@cloudmesh
 import type { Redis } from "ioredis";
 import { withDistributedLock, type DistributedLockOptions } from "./billingLock.js";
 import { computeCostUsd } from "./pricing.js";
-import { writeOutboxEvent } from "./outbox.js";
+import { writeOutboxEvent } from "@cloudmesh/outbox";
 import type { UnifiedUsage } from "../providers/types.js";
 import { BudgetExceededError } from "../errors.js";
 
@@ -45,6 +45,21 @@ export async function enforceBudget(
     async () => {
       const status = await getBudgetStatus(db, orgId);
       if (status.remainingUsd !== null && status.remainingUsd <= 0) {
+        // Phase 11: a real `budget.exceeded` event (the design doc's other
+        // budget event, alongside `budget.warning`) — written before the
+        // throw so a rejected request still leaves a durable, dispatchable
+        // record of why. A separate small transaction, not bundled with
+        // any other write: unlike usage.recorded (atomic with the
+        // usage_records insert it describes), this event is derived purely
+        // from a read, so there's nothing else it needs to be atomic with.
+        await withTenant(db, orgId, (tx) =>
+          writeOutboxEvent(tx, "budget.exceeded", {
+            orgId,
+            spentUsd: status.spentUsd,
+            budgetUsd: status.budgetUsd,
+            remainingUsd: status.remainingUsd,
+          }),
+        );
         throw new BudgetExceededError(status.remainingUsd);
       }
       return status;

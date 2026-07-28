@@ -127,5 +127,14 @@ jobs:
       - run: npm test --workspace=@cloudmesh/jobs
       - run: npm test --workspace=@cloudmesh/rate-limiter
       - run: npm test --workspace=@cloudmesh/circuit-breaker
+      # packages/outbox needs Postgres only (extracted from apps/gateway in
+      # Phase 11 so apps/api could write outbox rows for api_key events too).
+      - run: npm test --workspace=@cloudmesh/outbox
+      # packages/webhooks needs both: SSRF/HMAC/HTTP-classification tests are
+      # pure, but its pipeline.test.ts runs a real BullMQ worker end to end
+      # (dispatch -> queue -> HTTP -> DB), the same "queue/worker covered by
+      # real integration tests" pattern as jobs above, just inside this
+      # package rather than @cloudmesh/gateway.
+      - run: npm test --workspace=@cloudmesh/webhooks
       - run: npm test --workspace=@cloudmesh/api
       - run: npm test --workspace=@cloudmesh/gateway

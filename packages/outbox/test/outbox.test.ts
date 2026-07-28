@@ -5,7 +5,7 @@ import {
   startOutboxPoller,
   writeOutboxEvent,
   type EventPublisher,
-} from "../../src/lib/outbox.js";
+} from "../src/outbox.js";
 
 const admin = getAdminPrisma();
 

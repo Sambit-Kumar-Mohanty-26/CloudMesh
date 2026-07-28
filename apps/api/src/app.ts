@@ -11,6 +11,7 @@ import apiKeyRoutes from "./modules/apiKeys/routes.js";
 import whoamiRoute from "./modules/apiKeys/whoamiRoute.js";
 import billingRoutes from "./modules/billing/routes.js";
 import billingWebhookRoutes from "./modules/billing/webhookRoutes.js";
+import webhookRoutes from "./modules/webhooks/routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -59,6 +60,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(whoamiRoute);
   await app.register(billingRoutes);
   await app.register(billingWebhookRoutes);
+  await app.register(webhookRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

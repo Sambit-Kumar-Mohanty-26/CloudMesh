@@ -8,16 +8,19 @@ individual apps don't reimplement that plumbing.
 
 ```
 apps/api/                 Fastify service: auth, API key management, billing config,
-                             invoices, Stripe webhook receiver
+                             invoices, Stripe webhook receiver, webhook endpoint registration
 apps/gateway/              Fastify service: unified /v1/chat across providers — streaming,
                              idempotency, rate limiting, circuit breaker + retry, semantic cache
                              + request dedup, budget enforcement + usage billing, intelligent
-                             routing (scoring, named presets, A/B), async jobs + WebSocket progress
+                             routing (scoring, named presets, A/B), async jobs + WebSocket progress,
+                             outbound webhook dispatch + email notifications
 packages/db/                Prisma schema, migrations, shared DB client
 packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
 packages/billing/             Shared budget-status logic (getBudgetStatus) used by both apps/*
 packages/jobs/                BullMQ queue, worker pool, DLQ + replay, progress pub/sub
 packages/events/              NATS JetStream bus: event schema, publisher, durable subscribers
+packages/outbox/               Transactional outbox (write + poll-and-publish), shared by both apps/*
+packages/webhooks/             SSRF guard, HMAC signing, BullMQ delivery queue + worker, registration
 packages/rate-limiter/        4 distributed rate-limiting algorithms (Redis + Lua)
 packages/circuit-breaker/      Circuit breaker (3-state, Redis + Lua) + backoff retry
 notes/                          Original project spec (read-only reference)
@@ -73,8 +76,8 @@ npm run worker --workspace=@cloudmesh/gateway
 ```
 
 Platform events (Phase 10) drain from the transactional outbox onto NATS
-JetStream. The four subscribers (analytics, audit, billing, notifications)
-run in their own process:
+JetStream. The five subscribers (analytics, audit, billing, webhook
+dispatch, email) run in their own process:
 
 ```bash
 npm run consumers --workspace=@cloudmesh/gateway
@@ -83,6 +86,23 @@ npm run consumers --workspace=@cloudmesh/gateway
 Without `NATS_URL` set the gateway logs outbox events instead of publishing
 them (events still accumulate safely in the outbox); the consumer process
 requires it and exits without it.
+
+Webhooks (Phase 11) are two-stage: the consumer process above only
+_enqueues_ a delivery per subscribed endpoint onto a separate BullMQ queue
+(SSRF-checked again at registration in `apps/api`'s `POST /webhooks`, and
+re-checked here on every delivery attempt, since DNS can rebind in between).
+A **separate worker process** actually re-checks the target, HMAC-signs the
+payload, and delivers it, following the design doc's literal 1s/5s/30s/
+5min/30min retry schedule on 5xx:
+
+```bash
+npm run webhook-worker --workspace=@cloudmesh/gateway
+```
+
+Email notifications (job completions, budget warnings, API key events) go
+through Resend and are optional — set `RESEND_API_KEY` in
+`apps/gateway/.env` to enable them; unset, the email subscriber's sends fail
+individually (logged, swallowed) without blocking the consumer process.
 
 ## Testing
 

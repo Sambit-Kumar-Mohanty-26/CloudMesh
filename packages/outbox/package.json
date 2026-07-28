@@ -1,5 +1,5 @@
 {
-  "name": "@cloudmesh/jobs",
+  "name": "@cloudmesh/outbox",
   "private": true,
   "version": "0.0.0",
   "main": "./src/index.ts",
@@ -9,10 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cloudmesh/db": "*",
-    "@cloudmesh/outbox": "*",
-    "bullmq": "^5.81.2",
-    "ioredis": "^5.4.1"
+    "@cloudmesh/db": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
