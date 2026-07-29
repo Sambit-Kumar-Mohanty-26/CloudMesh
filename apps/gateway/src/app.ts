@@ -1,3 +1,5 @@
+import { registerMetricsRoute } from "@cloudmesh/metrics";
+import { getTraceContext } from "@cloudmesh/telemetry";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import { env } from "./env.js";
@@ -13,7 +15,14 @@ import redisPlugin from "./plugins/redis.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: env.NODE_ENV === "test" ? false : true,
+    // Pino's `mixin` runs on every log call and merges its return value
+    // into that line — this is Phase 12's log/trace correlation: any log
+    // written from inside a request that has an active OTel span
+    // automatically carries that span's trace_id/span_id, with zero
+    // call-site changes anywhere else in the codebase. Returns `{}` (not
+    // undefined) with no active span so the shape stays consistent rather
+    // than sometimes having the fields and sometimes not.
+    logger: env.NODE_ENV === "test" ? false : { mixin: () => getTraceContext() ?? {} },
   });
 
   await app.register(dbPlugin);
@@ -24,6 +33,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // built from both (see modules/jobs/handlers.ts).
   await app.register(jobsPlugin);
   await app.register(websocket);
+  await app.register(registerMetricsRoute);
 
   app.setErrorHandler((err, request, reply) => {
     if (err instanceof AppError) {

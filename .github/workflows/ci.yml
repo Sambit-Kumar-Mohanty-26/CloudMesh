@@ -117,6 +117,13 @@ jobs:
       # REDIS_URL itself. packages/billing needs Postgres only (budget
       # status is pure DB logic, no Redis/lock involved at that layer).
       - run: npm test --workspace=@cloudmesh/auth
+      # packages/telemetry (span helper, no OTLP network calls in its
+      # tests — a real BasicTracerProvider + InMemorySpanExporter, same
+      # spirit as MockAgent-based provider adapter tests elsewhere) and
+      # packages/metrics (prom-client registry + a real, but network-free,
+      # Fastify app) are both pure too — grouped here for the same reason.
+      - run: npm test --workspace=@cloudmesh/telemetry
+      - run: npm test --workspace=@cloudmesh/metrics
       - run: npm test --workspace=@cloudmesh/billing
       # packages/events has both pure schema tests and real JetStream
       # integration tests — hence the NATS step above.

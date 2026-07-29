@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: cloudmesh-api
+    static_configs:
+      - targets: ["host.docker.internal:3000"]
+
+  - job_name: cloudmesh-gateway
+    static_configs:
+      - targets: ["host.docker.internal:3001"]

@@ -23,6 +23,10 @@ packages/outbox/               Transactional outbox (write + poll-and-publish), 
 packages/webhooks/             SSRF guard, HMAC signing, BullMQ delivery queue + worker, registration
 packages/rate-limiter/        4 distributed rate-limiting algorithms (Redis + Lua)
 packages/circuit-breaker/      Circuit breaker (3-state, Redis + Lua) + backoff retry
+packages/telemetry/            OpenTelemetry SDK bootstrap, span helper, trace/log correlation
+packages/metrics/              Prometheus metrics (prom-client) + /metrics route
+docker/                          Prometheus scrape config + Grafana datasource/dashboard provisioning
+runbooks/                        On-call runbooks for the three alerts wired against real metrics
 notes/                          Original project spec (read-only reference)
 ```
 
@@ -103,6 +107,35 @@ Email notifications (job completions, budget warnings, API key events) go
 through Resend and are optional — set `RESEND_API_KEY` in
 `apps/gateway/.env` to enable them; unset, the email subscriber's sends fail
 individually (logged, swallowed) without blocking the consumer process.
+
+## Observability
+
+`docker compose up -d` also starts Jaeger, Prometheus, and Grafana
+alongside Postgres/Redis/NATS:
+
+- **Jaeger UI** — <http://localhost:16686> (traces)
+- **Prometheus** — <http://localhost:9090> (raw metrics/targets)
+- **Grafana** — <http://localhost:3300> (dashboards; anonymous admin
+  access, local dev only)
+
+Both apps run every process through a `src/instrument.ts` bootstrap
+(`npm run dev`/`start`/`worker`/`consumers`/`webhook-worker` all point at
+it now, not the old entry files directly) that starts the OpenTelemetry SDK
+**before** anything else is imported — required for its `http`/`undici`/
+`ioredis` auto-instrumentation to actually patch those modules; starting it
+any later (even as the first line of `server.ts`) is too late, since ES
+module imports are hoisted and evaluated before that line would run. Traces
+export to Jaeger's OTLP receiver (`http://localhost:4318`, both apps'
+default) — override with `OTEL_EXPORTER_OTLP_ENDPOINT` to point at a real
+collector elsewhere.
+
+Every service also exposes `GET /metrics` (Prometheus exposition format,
+unauthenticated — meant to be reached only from inside a scrape network,
+not exposed publicly), which the Prometheus container scrapes via
+`host.docker.internal` every 15s. `docker/grafana/dashboards/` has four
+provisioned dashboards (Overview, Per-Org, Provider, Cache); `runbooks/`
+has the on-call runbook for each of the three alerts the design doc calls
+for, each referencing a real, wired metric.
 
 ## Testing
 

@@ -1,4 +1,6 @@
+import { rateLimitRejectedTotal } from "@cloudmesh/metrics";
 import { tokenBucket } from "@cloudmesh/rate-limiter";
+import { withSpan } from "@cloudmesh/telemetry";
 import type { FastifyRequest } from "fastify";
 import { RateLimitError } from "../errors.js";
 
@@ -18,16 +20,21 @@ import { RateLimitError } from "../errors.js";
  * any hijacking) ever runs.
  */
 export async function requireRateLimit(request: FastifyRequest): Promise<void> {
-  const ctx = request.apiKeyCtx!;
-  const capacity = ctx.rateLimitRpm;
-  const refillPerSecond = capacity / 60;
+  return withSpan("rate_limiter", {}, async (span) => {
+    const ctx = request.apiKeyCtx!;
+    const capacity = ctx.rateLimitRpm;
+    const refillPerSecond = capacity / 60;
 
-  const result = await tokenBucket(request.server.redis, ctx.apiKeyId, {
-    capacity,
-    refillPerSecond,
+    const result = await tokenBucket(request.server.redis, ctx.apiKeyId, {
+      capacity,
+      refillPerSecond,
+    });
+    span.setAttribute("allowed", result.allowed);
+    span.setAttribute("remaining", result.remaining);
+
+    if (!result.allowed) {
+      rateLimitRejectedTotal.inc({ org: ctx.orgId });
+      throw new RateLimitError((result.resetAt - Date.now()) / 1000);
+    }
   });
-
-  if (!result.allowed) {
-    throw new RateLimitError((result.resetAt - Date.now()) / 1000);
-  }
 }

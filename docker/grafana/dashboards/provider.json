@@ -1,0 +1,45 @@
+{
+  "uid": "cloudmesh-provider",
+  "title": "CloudMesh — Provider",
+  "tags": ["cloudmesh"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Circuit breaker state (0=closed, 1=half_open, 2=open)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [{ "expr": "cloudmesh_circuit_breaker_state", "legendFormat": "{{provider}}" }],
+      "fieldConfig": { "defaults": { "min": 0, "max": 2 }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "Avg latency by model",
+      "type": "timeseries",
+      "description": "cloudmesh_request_duration_ms is labeled by org/model, not provider directly — model implies provider in practice (gpt-4o -> OpenAI, claude-* -> Anthropic, ...), and grouping by model here avoids adding a redundant, higher-cardinality label to an already-shipped histogram.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "avg by (model) (rate(cloudmesh_request_duration_ms_sum[5m]) / rate(cloudmesh_request_duration_ms_count[5m]))",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 3,
+      "title": "Request volume by model",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (model) (rate(cloudmesh_requests_total[5m]))",
+          "legendFormat": "{{model}}"
+        }
+      ]
+    }
+  ]
+}

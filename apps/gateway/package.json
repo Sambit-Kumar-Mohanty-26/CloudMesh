@@ -4,14 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx --env-file=.env watch src/server.ts",
-    "start": "tsx --env-file=.env src/server.ts",
+    "dev": "tsx --env-file=.env watch src/instrument.ts server",
+    "start": "tsx --env-file=.env src/instrument.ts server",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "worker": "tsx --env-file=.env src/worker.ts",
-    "consumers": "tsx --env-file=.env src/consumers.ts",
-    "webhook-worker": "tsx --env-file=.env src/webhookWorker.ts"
+    "worker": "tsx --env-file=.env src/instrument.ts worker",
+    "consumers": "tsx --env-file=.env src/instrument.ts consumers",
+    "webhook-worker": "tsx --env-file=.env src/instrument.ts webhookWorker"
   },
   "dependencies": {
     "@cloudmesh/auth": "*",
@@ -20,8 +20,10 @@
     "@cloudmesh/db": "*",
     "@cloudmesh/events": "*",
     "@cloudmesh/jobs": "*",
+    "@cloudmesh/metrics": "*",
     "@cloudmesh/outbox": "*",
     "@cloudmesh/rate-limiter": "*",
+    "@cloudmesh/telemetry": "*",
     "@cloudmesh/webhooks": "*",
     "@fastify/websocket": "^11.3.0",
     "bullmq": "^5.81.2",
@@ -32,6 +34,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.10.0",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/node": "^22.9.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

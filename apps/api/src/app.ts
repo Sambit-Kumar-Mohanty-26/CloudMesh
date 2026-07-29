@@ -1,3 +1,5 @@
+import { registerMetricsRoute } from "@cloudmesh/metrics";
+import { getTraceContext } from "@cloudmesh/telemetry";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -15,13 +17,17 @@ import webhookRoutes from "./modules/webhooks/routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: env.NODE_ENV === "test" ? false : true,
+    // Same log/trace correlation as apps/gateway's app.ts — see its
+    // identical comment for why this is a `mixin`, not a per-call-site
+    // change.
+    logger: env.NODE_ENV === "test" ? false : { mixin: () => getTraceContext() ?? {} },
   });
 
   await app.register(dbPlugin);
   await app.register(redisPlugin);
   await app.register(stripePlugin);
   await app.register(cookie);
+  await app.register(registerMetricsRoute);
 
   // Global baseline; auth endpoints below override with a much tighter
   // limit, since credential endpoints are a brute-force target from day

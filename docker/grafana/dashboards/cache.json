@@ -1,0 +1,46 @@
+{
+  "uid": "cloudmesh-cache",
+  "title": "CloudMesh — Cache",
+  "tags": ["cloudmesh"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cache hit ratio",
+      "type": "stat",
+      "description": "The design doc names this metric cloudmesh_cache_hit_ratio directly, but a ratio has no native Prometheus type. Computed here from the raw cloudmesh_cache_outcomes_total{outcome} counter — see packages/metrics/src/metrics.ts for why a stateful in-process gauge was rejected in favor of this.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(cloudmesh_cache_outcomes_total{outcome=\"hit\"}[5m])) / sum(rate(cloudmesh_cache_outcomes_total[5m]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "title": "Hit / miss volume",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (rate(cloudmesh_cache_outcomes_total[5m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Not tracked: savings & popular prompts",
+      "type": "text",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 8 },
+      "options": {
+        "mode": "markdown",
+        "content": "The design doc's Cache panel also lists **savings** and **popular prompts**, neither of which this metric set tracks, deliberately:\n\n- **Savings** (cost avoided by cache hits) would need a recording rule multiplying hit count by an *estimated* per-request cost, since a hit itself incurs $0 direct provider cost — there's no real number to sum, only a derived estimate. Not built this phase; a reasonable follow-up is a Prometheus recording rule combining `cloudmesh_cache_outcomes_total{outcome=\"hit\"}` with the org's average `cloudmesh_cost_usd_total` per request.\n- **Popular prompts** would require prompt text (or a hash of it) as a metric label — a real cardinality and privacy anti-pattern (prompt/response content must never appear in metrics, logs, or trace attributes; see `apps/gateway/src/modules/chat/routes.ts`'s existing `codeql[js/clear-text-logging]` reasoning for the same rule applied to logging). Phase 6's own cache stats (`GET /v1/cache/stats`) already avoid this for the same reason."
+      }
+    }
+  ]
+}

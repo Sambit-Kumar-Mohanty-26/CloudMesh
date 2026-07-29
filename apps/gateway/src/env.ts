@@ -136,6 +136,14 @@ const schema = z.object({
   RESEND_API_KEY: z.string().optional(),
   RESEND_BASE_URL: z.string().url().default("https://api.resend.com"),
   RESEND_FROM_EMAIL: z.string().default("alerts@cloudmesh.dev"),
+
+  // Observability (Phase 12) — how often server.ts polls each provider's
+  // circuit state (a Redis read, via getCircuitState) into the
+  // cloudmesh_circuit_breaker_state gauge. Reactive updates aren't enough
+  // on their own: a circuit that trips and later half-opens/closes without
+  // any new request touching this specific poll path would otherwise leave
+  // the gauge stuck at its last-observed value.
+  CIRCUIT_METRICS_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export const env = schema.parse(process.env);

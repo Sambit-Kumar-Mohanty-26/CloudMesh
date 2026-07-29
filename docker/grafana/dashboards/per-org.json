@@ -1,0 +1,53 @@
+{
+  "uid": "cloudmesh-per-org",
+  "title": "CloudMesh — Per-Org",
+  "tags": ["cloudmesh"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requests by org",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum by (org) (rate(cloudmesh_requests_total[5m]))", "legendFormat": "{{org}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Tokens by org",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum by (org) (rate(cloudmesh_tokens_total[5m]))", "legendFormat": "{{org}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Cost by org",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "sum by (org) (rate(cloudmesh_cost_usd_total[5m]))", "legendFormat": "{{org}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] }
+    },
+    {
+      "id": 4,
+      "title": "Top orgs by request volume (1h)",
+      "type": "table",
+      "description": "The design doc's 'top endpoints' panel doesn't apply here — this gateway has one meaningful endpoint (POST /v1/chat). Top orgs by volume is the direct equivalent for a single-endpoint, multi-tenant gateway.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (org) (increase(cloudmesh_requests_total[1h])))",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}

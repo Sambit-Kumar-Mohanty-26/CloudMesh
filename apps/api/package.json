@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx --env-file=.env watch src/server.ts",
-    "start": "tsx --env-file=.env src/server.ts",
+    "dev": "tsx --env-file=.env watch src/instrument.ts",
+    "start": "tsx --env-file=.env src/instrument.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -14,7 +14,9 @@
     "@cloudmesh/auth": "*",
     "@cloudmesh/billing": "*",
     "@cloudmesh/db": "*",
+    "@cloudmesh/metrics": "*",
     "@cloudmesh/outbox": "*",
+    "@cloudmesh/telemetry": "*",
     "@cloudmesh/webhooks": "*",
     "@fastify/cookie": "^11.0.1",
     "@fastify/rate-limit": "^11.1.0",

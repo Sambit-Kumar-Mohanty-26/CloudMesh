@@ -1,3 +1,12 @@
+import {
+  cacheOutcomesTotal,
+  costUsdTotal,
+  requestDurationMs,
+  requestsTotal,
+  tokensTotal,
+  usageWriteFailuresTotal,
+} from "@cloudmesh/metrics";
+import { withSpan } from "@cloudmesh/telemetry";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { ZodError } from "zod";
 import { env } from "../../env.js";
@@ -59,6 +68,91 @@ function writeSSE(reply: FastifyReply, payload: unknown): void {
   reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+/**
+ * `cloudmesh_requests_total`/`cloudmesh_request_duration_ms` — recorded at
+ * each of the route's actual exit points (idempotency replay, non-
+ * streaming success/failure, streaming success/failure) rather than via a
+ * generic Fastify `onResponse` hook: the streaming path calls
+ * `reply.hijack()`, and Fastify's own docs say onResponse (like onSend)
+ * does NOT fire for a hijacked reply — the same reason billing's
+ * `recordUsageAndOutbox` is already called explicitly at each path instead
+ * of from a hook. Malformed-request/budget-rejection paths that never
+ * reach a resolved model (ValidationError before parsing, 402 from
+ * enforceBudget) are deliberately NOT covered here — a rejected request
+ * isn't a meaningful "chat request duration" sample, and their outcome is
+ * already visible in the HTTP status code / error rate, not this
+ * histogram.
+ */
+function recordRequestMetrics(
+  orgId: string,
+  model: string,
+  status: string,
+  startedAtMs: number,
+): void {
+  requestsTotal.inc({ org: orgId, model, status });
+  requestDurationMs.observe({ org: orgId, model }, Date.now() - startedAtMs);
+}
+
+/**
+ * The design doc's own "usage_records write failures > 0" alert — see
+ * runbooks/usage-write-failures.md. `recordUsageAndOutbox` can throw (a
+ * real Postgres error, not just "duplicate requestId," which it already
+ * handles via ON CONFLICT DO NOTHING) — without this wrapper, that error
+ * would propagate straight to Fastify's generic error handler as an
+ * anonymous 500, with no signal distinguishing "billing write failed" from
+ * any other internal error. `usageWriteFailuresTotal` is incremented here,
+ * specifically, before re-throwing unchanged — the request must still fail
+ * (silently succeeding a response without recording usage would be the
+ * actual revenue gap this alert exists to catch).
+ */
+async function recordUsageOrCountFailure(
+  db: Parameters<typeof recordUsageAndOutbox>[0],
+  params: Parameters<typeof recordUsageAndOutbox>[1],
+): ReturnType<typeof recordUsageAndOutbox> {
+  try {
+    return await recordUsageAndOutbox(db, params);
+  } catch (err) {
+    usageWriteFailuresTotal.inc({ org: params.orgId });
+    throw err;
+  }
+}
+
+/**
+ * Phase 12's structured-logging deliverable, matching the design doc's
+ * example log line field-for-field (`org_id`, `model`, `latency_ms`,
+ * `tokens`, `cost`, `cache_hit`, `provider`) — everything except
+ * `trace_id`/`span_id`, which every log line gets automatically via
+ * app.ts's pino `mixin` (see getTraceContext), not repeated here. Only
+ * called at a genuinely completed request (non-streaming and streaming
+ * success) — there's no meaningful tokens/cost/cache_hit reading for a
+ * replay, a rejection, or a failed stream.
+ */
+function logChatCompletion(
+  request: { log: { info: (fields: Record<string, unknown>, msg: string) => void } },
+  fields: {
+    orgId: string;
+    model: string;
+    provider: string;
+    latencyMs: number;
+    tokens: number;
+    cost: number;
+    cacheHit: boolean;
+  },
+): void {
+  request.log.info(
+    {
+      org_id: fields.orgId,
+      model: fields.model,
+      provider: fields.provider,
+      latency_ms: fields.latencyMs,
+      tokens: fields.tokens,
+      cost: fields.cost,
+      cache_hit: fields.cacheHit,
+    },
+    "chat request completed",
+  );
+}
+
 /** Shared shape for the "provider/circuit failed before anything streamed"
  *  responses, on both the streaming and non-streaming paths. */
 function providerFailureBody(err: ProviderError | ServiceUnavailableError) {
@@ -75,6 +169,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
   // Rate limiting only on the expensive, provider-cost-incurring route —
   // GET /v1/models is cheap/cached and doesn't need the same protection.
   fastify.post("/v1/chat", { preHandler: requireRateLimit }, async (request, reply) => {
+    const startedAtMs = Date.now();
     let input;
     try {
       input = chatRequestSchema.parse(request.body);
@@ -95,6 +190,8 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       if (replay) {
         reply.header("idempotent-replay", "true");
         reply.code(replay.statusCode);
+        const replayedModel = (replay.body as { model?: string }).model ?? "unknown";
+        recordRequestMetrics(orgId, replayedModel, "replay", startedAtMs);
         return replay.body;
       }
     }
@@ -109,11 +206,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     // both AppError subclasses this throws, or that resolveModelWithFallback
     // throws below, are handled generically by app.ts's error handler.
     const budgetStatus = flags.billing_enforcement
-      ? await enforceBudget(request.server.db, request.server.redis, orgId, {
-          ttlMs: env.BILLING_LOCK_TTL_MS,
-          retries: env.BILLING_LOCK_RETRIES,
-          retryDelayMs: env.BILLING_LOCK_RETRY_DELAY_MS,
-        })
+      ? await withSpan("billing", { orgId }, () =>
+          enforceBudget(request.server.db, request.server.redis, orgId, {
+            ttlMs: env.BILLING_LOCK_TTL_MS,
+            retries: env.BILLING_LOCK_RETRIES,
+            retryDelayMs: env.BILLING_LOCK_RETRY_DELAY_MS,
+          }),
+        )
       : undefined;
 
     // Budget-constrained downgrade (auto-only, same rule as Phase 5's
@@ -179,8 +278,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
       const runChat = (): Promise<UnifiedChatResponse> => {
         const doCall = () =>
-          callProviderResilientWithStats(request.server.redis, resolved.provider.name, () =>
-            resolved.provider.chat(providerReq),
+          withSpan(
+            "llm_provider",
+            { model: resolved.providerModel, provider: resolved.provider.name },
+            () =>
+              callProviderResilientWithStats(request.server.redis, resolved.provider.name, () =>
+                resolved.provider.chat(providerReq),
+              ),
           );
         // The dedup key MUST include orgId — promptHash alone isn't
         // org-scoped, so two different orgs sending byte-identical prompts
@@ -198,23 +302,26 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       try {
         if (flags.semantic_cache) {
           const embedding = await request.server.embeddings.embed(promptText(input.messages));
-          const cached = await lookupCache(
-            request.server.db,
-            orgId,
-            resolved.providerModel,
-            promptHash,
-            embedding,
-            {
-              similarityThreshold: env.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
-              ttlDays: flags.cache_ttl_days ?? env.SEMANTIC_CACHE_TTL_DAYS,
-            },
+          const cached = await withSpan(
+            "semantic_cache",
+            { orgId, model: resolved.providerModel },
+            (span) =>
+              lookupCache(request.server.db, orgId, resolved.providerModel, promptHash, embedding, {
+                similarityThreshold: env.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
+                ttlDays: flags.cache_ttl_days ?? env.SEMANTIC_CACHE_TTL_DAYS,
+              }).then((result) => {
+                span.setAttribute("hit", result !== null);
+                return result;
+              }),
           );
           if (cached) {
             await recordCacheOutcome(request.server.redis, orgId, "hit");
+            cacheOutcomesTotal.inc({ outcome: "hit" });
             response = JSON.parse(cached) as UnifiedChatResponse;
             fromCache = true;
           } else {
             await recordCacheOutcome(request.server.redis, orgId, "miss");
+            cacheOutcomesTotal.inc({ outcome: "miss" });
             response = await runChat();
             // Awaited (not fire-and-forget): a caller that immediately
             // repeats this request, or immediately flushes the cache, must
@@ -260,6 +367,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
           if (err.headers) reply.headers(err.headers);
           reply.code(err.statusCode);
+          recordRequestMetrics(orgId, resolved.providerModel, String(err.statusCode), startedAtMs);
           return providerFailureBody(err);
         }
         throw err;
@@ -267,14 +375,30 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
       // A cache hit incurred no new provider cost — billing it again would
       // double-count the original request that populated the cache entry.
+      let costUsd = 0;
       if (!fromCache) {
-        await recordUsageAndOutbox(request.server.db, {
+        const usageResult = await recordUsageOrCountFailure(request.server.db, {
           orgId,
           apiKeyId,
           model: resolved.providerModel,
           usage: response.usage,
           requestId: response.id,
         });
+        costUsd = usageResult.costUsd;
+        // Only for a genuinely new recording — a redelivered/duplicate
+        // requestId (usageResult.recorded === false) already contributed
+        // its tokens/cost the first time it was recorded.
+        if (usageResult.recorded) {
+          tokensTotal.inc(
+            { org: orgId, model: resolved.providerModel, type: "prompt" },
+            response.usage.promptTokens,
+          );
+          tokensTotal.inc(
+            { org: orgId, model: resolved.providerModel, type: "completion" },
+            response.usage.completionTokens,
+          );
+          costUsdTotal.inc({ org: orgId, model: resolved.providerModel }, usageResult.costUsd);
+        }
       }
 
       if (idempotencyKey) {
@@ -286,6 +410,16 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           env.IDEMPOTENCY_TTL_SECONDS,
         );
       }
+      recordRequestMetrics(orgId, resolved.providerModel, "200", startedAtMs);
+      logChatCompletion(request, {
+        orgId,
+        model: resolved.providerModel,
+        provider: resolved.provider.name,
+        latencyMs: Date.now() - startedAtMs,
+        tokens: response.usage.promptTokens + response.usage.completionTokens,
+        cost: costUsd,
+        cacheHit: fromCache,
+      });
       return response;
     }
 
@@ -302,13 +436,14 @@ export default async function chatRoutes(fastify: FastifyInstance) {
     let first: IteratorResult<UnifiedChatChunk>;
     let iterator: AsyncIterator<UnifiedChatChunk>;
     try {
-      const attempt = await callProviderResilientWithStats(
-        request.server.redis,
-        resolved.provider.name,
-        async () => {
-          const it = resolved.provider.chatStream(providerReq)[Symbol.asyncIterator]();
-          return { it, result: await it.next() };
-        },
+      const attempt = await withSpan(
+        "llm_provider",
+        { model: resolved.providerModel, provider: resolved.provider.name, stream: true },
+        () =>
+          callProviderResilientWithStats(request.server.redis, resolved.provider.name, async () => {
+            const it = resolved.provider.chatStream(providerReq)[Symbol.asyncIterator]();
+            return { it, result: await it.next() };
+          }),
       );
       iterator = attempt.it;
       first = attempt.result;
@@ -316,6 +451,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
         if (err.headers) reply.headers(err.headers);
         reply.code(err.statusCode);
+        recordRequestMetrics(orgId, resolved.providerModel, String(err.statusCode), startedAtMs);
         return providerFailureBody(err);
       }
       throw err;
@@ -323,6 +459,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
     if (first.done) {
       reply.code(502);
+      recordRequestMetrics(orgId, resolved.providerModel, "502", startedAtMs);
       return { error: "Provider returned an empty stream", code: "PROVIDER_ERROR" };
     }
 
@@ -374,13 +511,24 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         usage,
       };
 
-      await recordUsageAndOutbox(request.server.db, {
+      const usageResult = await recordUsageOrCountFailure(request.server.db, {
         orgId,
         apiKeyId,
         model: resolved.providerModel,
         usage,
         requestId: responseId,
       });
+      if (usageResult.recorded) {
+        tokensTotal.inc(
+          { org: orgId, model: resolved.providerModel, type: "prompt" },
+          usage.promptTokens,
+        );
+        tokensTotal.inc(
+          { org: orgId, model: resolved.providerModel, type: "completion" },
+          usage.completionTokens,
+        );
+        costUsdTotal.inc({ org: orgId, model: resolved.providerModel }, usageResult.costUsd);
+      }
 
       if (idempotencyKey) {
         await storeIdempotentResult(
@@ -391,6 +539,20 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           env.IDEMPOTENCY_TTL_SECONDS,
         );
       }
+      recordRequestMetrics(orgId, resolved.providerModel, "200", startedAtMs);
+      // Streaming never hits Phase 6's semantic cache (non-streaming-only,
+      // see the feature flag check above) — cacheHit is always false here.
+      logChatCompletion(request, {
+        orgId,
+        model: resolved.providerModel,
+        provider: resolved.provider.name,
+        latencyMs: Date.now() - startedAtMs,
+        tokens: usage.promptTokens + usage.completionTokens,
+        cost: usageResult.costUsd,
+        cacheHit: false,
+      });
+    } else {
+      recordRequestMetrics(orgId, resolved.providerModel, "stream_failed", startedAtMs);
     }
 
     reply.raw.write("data: [DONE]\n\n");
