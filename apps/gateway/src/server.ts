@@ -6,6 +6,7 @@ import { LogEventPublisher, startOutboxPoller, type EventPublisher } from "@clou
 import { buildApp } from "./app.js";
 import { env } from "./env.js";
 import { NatsEventPublisher } from "./lib/natsPublisher.js";
+import { getActiveOrgIds, getOrgLiveStats, liveStatsChannel } from "./lib/orgLiveStats.js";
 
 const app = await buildApp();
 
@@ -56,6 +57,26 @@ const circuitMetricsPoll = setInterval(() => {
   ).catch((err: unknown) => app.log.error(err, "circuit metrics poll failed"));
 }, env.CIRCUIT_METRICS_POLL_INTERVAL_MS);
 circuitMetricsPoll.unref();
+
+// Dashboard live stats — publishes each recently-active org's {rps, p99,
+// errors} onto `analytics:{orgId}`, which apps/api's WS /ws/live-stats
+// subscribes to and relays. Only orgs with at least one sample in the last
+// poll's active-orgs set get a publish — no subscribers means no waste,
+// and an org that goes quiet naturally stops updating (still returns
+// all-zeros on the next request, not stale nonzero data).
+const liveStatsPoll = setInterval(() => {
+  getActiveOrgIds(app.redis)
+    .then((orgIds) =>
+      Promise.all(
+        orgIds.map(async (orgId) => {
+          const stats = await getOrgLiveStats(app.redis, orgId);
+          await app.redis.publish(liveStatsChannel(orgId), JSON.stringify(stats));
+        }),
+      ),
+    )
+    .catch((err: unknown) => app.log.error(err, "live stats publish failed"));
+}, env.LIVE_STATS_PUBLISH_INTERVAL_MS);
+liveStatsPoll.unref();
 
 // See apps/api/src/server.ts for why disconnectAll() happens here, after
 // app.close(), rather than in plugins/db.ts's onClose hook.

@@ -8,12 +8,15 @@ individual apps don't reimplement that plumbing.
 
 ```
 apps/api/                 Fastify service: auth, API key management, billing config,
-                             invoices, Stripe webhook receiver, webhook endpoint registration
+                             invoices, Stripe webhook receiver, webhook endpoint registration,
+                             usage analytics aggregation, live-stats WebSocket relay
 apps/gateway/              Fastify service: unified /v1/chat across providers — streaming,
                              idempotency, rate limiting, circuit breaker + retry, semantic cache
                              + request dedup, budget enforcement + usage billing, intelligent
                              routing (scoring, named presets, A/B), async jobs + WebSocket progress,
-                             outbound webhook dispatch + email notifications
+                             outbound webhook dispatch + email notifications, live-stats publisher
+apps/dashboard/             Next.js developer portal — API keys, usage charts, request logs,
+                             budget/webhook settings, live API playground (BFF over apps/api)
 packages/db/                Prisma schema, migrations, shared DB client
 packages/auth/               Shared API-key auth (resolveApiKey) used by both apps/*
 packages/billing/             Shared budget-status logic (getBudgetStatus) used by both apps/*
@@ -137,6 +140,27 @@ provisioned dashboards (Overview, Per-Org, Provider, Cache); `runbooks/`
 has the on-call runbook for each of the three alerts the design doc calls
 for, each referencing a real, wired metric.
 
+## Developer dashboard
+
+```bash
+npm run dev --workspace=@cloudmesh/dashboard   # apps/dashboard on :3002
+```
+
+A Next.js 16 App Router portal in front of apps/api and apps/gateway — API
+key management, usage charts, a request-log explorer, budget/webhook
+settings, and a live API playground (Monaco editor + real SSE streaming
+against `POST /v1/chat`). It's a BFF, not a direct browser-to-service
+client: every page/action calls apps/api server-to-server, carrying the
+session in the dashboard's own cookie (see CLAUDE.md's Phase 13 notes for
+why apps/api's refresh cookie can't cross origins directly). Points at
+`http://localhost:3000`/`:3001` by default — override with
+`CLOUDMESH_API_URL`/`CLOUDMESH_GATEWAY_URL` if those run elsewhere.
+
+The live "requests per second / p99 / errors" feed on the dashboard is a
+real Redis pub/sub round trip: apps/gateway computes it per-org
+(`lib/orgLiveStats.ts`) and publishes every 5s; apps/api's `WS
+/ws/live-stats` only relays it to the browser.
+
 ## Testing
 
 Integration tests hit a real Postgres + Redis + NATS (the same
@@ -157,6 +181,12 @@ npm run format:check
 
 All three, plus the test suite, are expected to be clean before a change is
 considered done.
+
+`npm audit --omit=dev` has three known, documented exceptions as of Phase
+13, all inside `apps/dashboard`'s dependencies (`dompurify` via
+`monaco-editor`; `postcss`/`sharp` bundled inside `next@16.2.12` itself) —
+none of the vulnerable code paths are reachable by this app's actual usage.
+See CLAUDE.md's Phase 13 notes for the full reasoning and what was tried.
 
 ## Database
 

@@ -145,3 +145,9 @@ jobs:
       - run: npm test --workspace=@cloudmesh/webhooks
       - run: npm test --workspace=@cloudmesh/api
       - run: npm test --workspace=@cloudmesh/gateway
+      # apps/dashboard's own tests are pure too (mocked fetch, no DB/Redis —
+      # "server-only" is stubbed via vi.mock since it's one of Next's own
+      # internal bundler aliases, unresolvable outside Next's build). The
+      # BFF auth/proxy flow it exercises is otherwise only verified by
+      # actually running the stack (Phase 13 notes), not by CI.
+      - run: npm test --workspace=@cloudmesh/dashboard

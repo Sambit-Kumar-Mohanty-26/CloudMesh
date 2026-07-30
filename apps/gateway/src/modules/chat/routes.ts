@@ -8,6 +8,7 @@ import {
 } from "@cloudmesh/metrics";
 import { withSpan } from "@cloudmesh/telemetry";
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { Redis } from "ioredis";
 import { ZodError } from "zod";
 import { env } from "../../env.js";
 import { ProviderError, ServiceUnavailableError, ValidationError } from "../../errors.js";
@@ -18,6 +19,7 @@ import {
 } from "../../lib/billing.js";
 import { getOrgFeatureFlags } from "../../lib/featureFlags.js";
 import { getIdempotentReplay, storeIdempotentResult } from "../../lib/idempotency.js";
+import { recordOrgRequestOutcome } from "../../lib/orgLiveStats.js";
 import { getProviderStats } from "../../lib/providerStats.js";
 import { withRequestDedup } from "../../lib/requestDedup.js";
 import { callProviderResilientWithStats } from "../../lib/resilience.js";
@@ -84,13 +86,24 @@ function writeSSE(reply: FastifyReply, payload: unknown): void {
  * histogram.
  */
 function recordRequestMetrics(
+  redis: Redis,
   orgId: string,
   model: string,
   status: string,
   startedAtMs: number,
 ): void {
+  const latencyMs = Date.now() - startedAtMs;
   requestsTotal.inc({ org: orgId, model, status });
-  requestDurationMs.observe({ org: orgId, model }, Date.now() - startedAtMs);
+  requestDurationMs.observe({ org: orgId, model }, latencyMs);
+  // Phase 13's dashboard live-stats feed (WS /ws/live-stats in apps/api) —
+  // "replay" is a successful response (from the idempotency cache), not an
+  // error; everything else non-200 is.
+  void recordOrgRequestOutcome(
+    redis,
+    orgId,
+    latencyMs,
+    status !== "200" && status !== "replay",
+  ).catch(() => undefined);
 }
 
 /**
@@ -191,7 +204,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         reply.header("idempotent-replay", "true");
         reply.code(replay.statusCode);
         const replayedModel = (replay.body as { model?: string }).model ?? "unknown";
-        recordRequestMetrics(orgId, replayedModel, "replay", startedAtMs);
+        recordRequestMetrics(request.server.redis, orgId, replayedModel, "replay", startedAtMs);
         return replay.body;
       }
     }
@@ -367,7 +380,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
           if (err.headers) reply.headers(err.headers);
           reply.code(err.statusCode);
-          recordRequestMetrics(orgId, resolved.providerModel, String(err.statusCode), startedAtMs);
+          recordRequestMetrics(
+            request.server.redis,
+            orgId,
+            resolved.providerModel,
+            String(err.statusCode),
+            startedAtMs,
+          );
           return providerFailureBody(err);
         }
         throw err;
@@ -410,7 +429,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           env.IDEMPOTENCY_TTL_SECONDS,
         );
       }
-      recordRequestMetrics(orgId, resolved.providerModel, "200", startedAtMs);
+      recordRequestMetrics(request.server.redis, orgId, resolved.providerModel, "200", startedAtMs);
       logChatCompletion(request, {
         orgId,
         model: resolved.providerModel,
@@ -451,7 +470,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       if (err instanceof ProviderError || err instanceof ServiceUnavailableError) {
         if (err.headers) reply.headers(err.headers);
         reply.code(err.statusCode);
-        recordRequestMetrics(orgId, resolved.providerModel, String(err.statusCode), startedAtMs);
+        recordRequestMetrics(
+          request.server.redis,
+          orgId,
+          resolved.providerModel,
+          String(err.statusCode),
+          startedAtMs,
+        );
         return providerFailureBody(err);
       }
       throw err;
@@ -459,7 +484,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
 
     if (first.done) {
       reply.code(502);
-      recordRequestMetrics(orgId, resolved.providerModel, "502", startedAtMs);
+      recordRequestMetrics(request.server.redis, orgId, resolved.providerModel, "502", startedAtMs);
       return { error: "Provider returned an empty stream", code: "PROVIDER_ERROR" };
     }
 
@@ -539,7 +564,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
           env.IDEMPOTENCY_TTL_SECONDS,
         );
       }
-      recordRequestMetrics(orgId, resolved.providerModel, "200", startedAtMs);
+      recordRequestMetrics(request.server.redis, orgId, resolved.providerModel, "200", startedAtMs);
       // Streaming never hits Phase 6's semantic cache (non-streaming-only,
       // see the feature flag check above) — cacheHit is always false here.
       logChatCompletion(request, {
@@ -552,7 +577,13 @@ export default async function chatRoutes(fastify: FastifyInstance) {
         cacheHit: false,
       });
     } else {
-      recordRequestMetrics(orgId, resolved.providerModel, "stream_failed", startedAtMs);
+      recordRequestMetrics(
+        request.server.redis,
+        orgId,
+        resolved.providerModel,
+        "stream_failed",
+        startedAtMs,
+      );
     }
 
     reply.raw.write("data: [DONE]\n\n");

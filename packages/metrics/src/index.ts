@@ -11,3 +11,4 @@ export {
   usageWriteFailuresTotal,
 } from "./metrics.js";
 export { registerMetricsRoute } from "./route.js";
+export { liveStatsChannel, type LiveStats } from "./liveStats.js";

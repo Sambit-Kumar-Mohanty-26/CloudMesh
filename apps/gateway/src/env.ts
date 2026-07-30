@@ -144,6 +144,12 @@ const schema = z.object({
   // any new request touching this specific poll path would otherwise leave
   // the gauge stuck at its last-observed value.
   CIRCUIT_METRICS_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+
+  // Dashboard live stats (Phase 13) — how often server.ts publishes each
+  // active org's {rps, p99, errors} onto Redis (`analytics:{orgId}`) for
+  // apps/api's WS /ws/live-stats to relay. 5s matches the design doc's
+  // literal "server pushes ... every 5s".
+  LIVE_STATS_PUBLISH_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export const env = schema.parse(process.env);

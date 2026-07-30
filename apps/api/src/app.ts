@@ -2,6 +2,7 @@ import { registerMetricsRoute } from "@cloudmesh/metrics";
 import { getTraceContext } from "@cloudmesh/telemetry";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
+import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import { env } from "./env.js";
 import { AppError } from "./errors.js";
@@ -11,8 +12,10 @@ import stripePlugin from "./plugins/stripe.js";
 import authRoutes from "./modules/auth/routes.js";
 import apiKeyRoutes from "./modules/apiKeys/routes.js";
 import whoamiRoute from "./modules/apiKeys/whoamiRoute.js";
+import analyticsRoutes from "./modules/analytics/routes.js";
 import billingRoutes from "./modules/billing/routes.js";
 import billingWebhookRoutes from "./modules/billing/webhookRoutes.js";
+import liveStatsWsRoutes from "./modules/liveStats/wsRoutes.js";
 import webhookRoutes from "./modules/webhooks/routes.js";
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -27,6 +30,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(redisPlugin);
   await app.register(stripePlugin);
   await app.register(cookie);
+  await app.register(websocket);
   await app.register(registerMetricsRoute);
 
   // Global baseline; auth endpoints below override with a much tighter
@@ -67,6 +71,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(billingRoutes);
   await app.register(billingWebhookRoutes);
   await app.register(webhookRoutes);
+  await app.register(analyticsRoutes);
+  await app.register(liveStatsWsRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 
