@@ -12,6 +12,12 @@
 FROM node:22-slim AS base
 WORKDIR /app
 
+# See apps/api's Dockerfile for why this is here: node:22-slim's bundled
+# npm 10.9.8 carries real CVEs in its own dependencies (tar, sigstore),
+# and this image's four entry points all run via `npx` at runtime, so npm
+# can't just be stripped the way it is from apps/dashboard's image.
+RUN npm install -g npm@12.0.2
+
 COPY package.json package-lock.json ./
 COPY packages/auth/package.json packages/auth/package.json
 COPY packages/billing/package.json packages/billing/package.json

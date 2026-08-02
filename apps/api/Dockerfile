@@ -7,6 +7,16 @@
 FROM node:22-slim AS base
 WORKDIR /app
 
+# node:22-slim ships npm 10.9.8, whose own bundled dependencies (tar,
+# sigstore, among others) carry real CRITICAL/HIGH CVEs — this service's
+# CMD below runs via `npx`, so npm is a genuine runtime dependency here,
+# not just a build tool that could be stripped (contrast apps/dashboard's
+# Dockerfile, which never invokes npm at runtime and removes it instead).
+# Pinned, not `@latest`, for the same reason every other version in this
+# repo is pinned rather than left floating — see CLAUDE.md's Phase 14 CI-
+# fix notes for the exact CVEs this resolves and how it was verified.
+RUN npm install -g npm@12.0.2
+
 # Manifests only, copied before source — installs the exact same
 # dependency tree regardless of which app's Dockerfile runs, so this layer
 # is cache-shared across api/gateway/dashboard image builds and only

@@ -29,6 +29,18 @@ FROM node:22-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3002
+
+# This image's CMD runs `node server.js` directly — npm/npx/yarn/corepack
+# are never invoked at runtime (unlike apps/api and apps/gateway, which
+# start via `npx tsx` and pin a patched npm instead — see those
+# Dockerfiles). node:22-slim ships all of these bundled regardless, and
+# npm's own bundled dependencies (tar, sigstore) carry real CVEs, so they
+# come out of the final image entirely rather than staying as unused,
+# vulnerable dead weight.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /opt/yarn-v* /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn \
+    /usr/local/bin/yarnpkg /usr/local/bin/corepack
+
 COPY --from=builder /app/apps/dashboard/.next/standalone ./
 EXPOSE 3002
 
