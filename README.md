@@ -30,8 +30,13 @@ packages/telemetry/            OpenTelemetry SDK bootstrap, span helper, trace/l
 packages/metrics/              Prometheus metrics (prom-client) + /metrics route
 docker/                          Prometheus scrape config + Grafana datasource/dashboard provisioning
 runbooks/                        On-call runbooks for the three alerts wired against real metrics
+k8s/                              Kubernetes manifests, infra cost estimate (see k8s/README.md)
 notes/                          Original project spec (read-only reference)
 ```
+
+Each deployable app (`apps/api`, `apps/gateway`, `apps/dashboard`) has its
+own `Dockerfile` at its root — see `k8s/README.md` for how they're built
+and deployed.
 
 ## Prerequisites
 
@@ -182,11 +187,13 @@ npm run format:check
 All three, plus the test suite, are expected to be clean before a change is
 considered done.
 
-`npm audit --omit=dev` has three known, documented exceptions as of Phase
-13, all inside `apps/dashboard`'s dependencies (`dompurify` via
-`monaco-editor`; `postcss`/`sharp` bundled inside `next@16.2.12` itself) —
-none of the vulnerable code paths are reachable by this app's actual usage.
-See CLAUDE.md's Phase 13 notes for the full reasoning and what was tried.
+`npm audit --omit=dev --audit-level=high` reports 0 vulnerabilities. The
+three findings inside `apps/dashboard`'s dependencies first hit in Phase 13
+(`dompurify` via `monaco-editor`; `postcss`/`sharp` bundled inside
+`next@16.2.12` itself) are fixed via root `package.json`'s `overrides` —
+`sharp` needed both a flat top-level entry and the nested `next.sharp`
+entry, since it's declared under `next`'s `optionalDependencies`. See
+CLAUDE.md's Phase 13 and Phase 14 notes for the full story.
 
 ## Database
 

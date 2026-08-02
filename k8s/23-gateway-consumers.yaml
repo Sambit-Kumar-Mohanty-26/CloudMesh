@@ -1,0 +1,35 @@
+# The four NATS JetStream subscribers (Phase 10: analytics, audit,
+# billing, and the webhook-dispatch/email pair added in Phase 11) — one
+# process, `npm run consumers`, same as local dev. Each subscriber is a
+# durable consumer with its own position, so multiple replicas here would
+# just mean multiple durable-consumer instances competing for the same
+# durable name rather than adding throughput — kept at 1 for that reason,
+# unlike gateway-worker/gateway-webhook-worker where BullMQ concurrency
+# genuinely scales with replica count.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-consumers
+  namespace: cloudmesh
+  labels: { app: gateway-consumers }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: gateway-consumers }
+  template:
+    metadata:
+      labels: { app: gateway-consumers }
+    spec:
+      containers:
+        - name: gateway-consumers
+          image: cloudmesh-gateway:latest
+          command: ["npx", "tsx", "apps/gateway/src/instrument.ts", "consumers"]
+          envFrom:
+            - configMapRef: { name: cloudmesh-config }
+            - secretRef: { name: cloudmesh-secrets }
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: cloudmesh-gateway-consumers
+          resources:
+            requests: { cpu: "150m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }

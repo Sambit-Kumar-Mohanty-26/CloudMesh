@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: cloudmesh
+  labels: { app: gateway }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: gateway }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: { app: gateway }
+    spec:
+      containers:
+        - name: gateway
+          image: cloudmesh-gateway:latest
+          # Explicit — the image's own default CMD already runs "server",
+          # stated here so this Deployment reads the same way as the
+          # worker/consumers/webhook-worker ones below that override it.
+          command: ["npx", "tsx", "apps/gateway/src/instrument.ts", "server"]
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef: { name: cloudmesh-config }
+            - secretRef: { name: cloudmesh-secrets }
+          env:
+            - name: PORT
+              value: "3001"
+            - name: OTEL_SERVICE_NAME
+              value: cloudmesh-gateway
+          readinessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 3001 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: cloudmesh
+spec:
+  selector: { app: gateway }
+  ports:
+    - port: 3001
+      targetPort: 3001
+---
+# Design doc: "go-gateway: min=2 max=20 targetCPU=60%" — the lower CPU
+# target and higher ceiling than api's HPA reflect this being the
+# provider-cost-incurring, request-volume-bearing hot path (Phase 4's own
+# rationale for why only /v1/chat gets rate-limited, not /v1/models).
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway
+  namespace: cloudmesh
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 60 }

@@ -1,0 +1,75 @@
+# Path routing here follows the REAL route table each service registers
+# (grep the route files, not the design doc's illustrative "/api/* ->
+# node-api" shorthand — this codebase's actual apps/api routes are
+# /auth/*, /api-keys, /billing/*, /analytics*, /webhooks*, /ws/live-stats,
+# with no common "/api" prefix at all). Two exact-match exceptions matter:
+#   - GET /v1/whoami lives in apps/api (Phase 2's key-lookup endpoint),
+#     even though it starts with /v1 like every gateway route — listed
+#     before the general /v1 prefix rule so it isn't shadowed by it.
+#   - /ws/live-stats (apps/api) vs /ws/jobs (apps/gateway) are BOTH under
+#     /ws, split by their next path segment instead.
+# GET /metrics is deliberately NOT exposed here at all — every service's
+# own note on that route says it's "meant to be reached only from inside
+# a scrape network, not exposed publicly." A real Prometheus scrapes the
+# api/gateway ClusterIP Services directly, bypassing this Ingress
+# entirely, the same way docker-compose's Prometheus reaches them via
+# host.docker.internal rather than through any public path.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cloudmesh
+  namespace: cloudmesh
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    # Chat streaming (SSE) and the WebSocket routes both need buffering
+    # disabled, or nginx holds the response until it ends instead of
+    # forwarding chunks as they arrive.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: cloudmesh.local
+      http:
+        paths:
+          - path: /v1/whoami
+            pathType: Exact
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service: { name: gateway, port: { number: 3001 } }
+          - path: /ws/jobs
+            pathType: Prefix
+            backend:
+              service: { name: gateway, port: { number: 3001 } }
+          - path: /ws/live-stats
+            pathType: Exact
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          - path: /api-keys
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          - path: /billing
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          - path: /analytics
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          - path: /webhooks
+            pathType: Prefix
+            backend:
+              service: { name: api, port: { number: 3000 } }
+          # Catch-all — the dashboard (login, every /dashboard/* page, the
+          # playground, and its own /api/* Route Handlers).
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: dashboard, port: { number: 3002 } }

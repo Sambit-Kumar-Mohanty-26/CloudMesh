@@ -1,0 +1,60 @@
+# Static replicas, no HPA — matches the design doc's own cluster diagram
+# (nextjs: Deployment, replicas:2, no autoscaling entry unlike go-gateway/
+# node-api). It's a thin BFF proxy in front of api/gateway, not itself on
+# the provider-cost-incurring or high-fanout hot path.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: cloudmesh
+  labels: { app: dashboard }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: dashboard }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: { app: dashboard }
+    spec:
+      containers:
+        - name: dashboard
+          image: cloudmesh-dashboard:latest
+          ports:
+            - containerPort: 3002
+          env:
+            # In-cluster Service DNS names — the dashboard is a BFF, calls
+            # both server-to-server (see CLAUDE.md's Phase 13 notes), so
+            # these point at ClusterIP services, never a public URL.
+            - name: CLOUDMESH_API_URL
+              value: "http://api:3000"
+            - name: CLOUDMESH_GATEWAY_URL
+              value: "http://gateway:3001"
+          readinessProbe:
+            httpGet: { path: /login, port: 3002 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /login, port: 3002 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "150m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: cloudmesh
+spec:
+  selector: { app: dashboard }
+  ports:
+    - port: 3002
+      targetPort: 3002

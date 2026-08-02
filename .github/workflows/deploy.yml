@@ -1,0 +1,111 @@
+name: Deploy
+
+# Phase 14's CI/CD pipeline: build -> scan -> (push -> rollout -> health
+# check). Runs after (not instead of) ci.yml — that workflow already
+# covers the design doc's "1. Run tests" and half of "2. dependency
+# scanning" (npm audit --audit-level=high). This one adds what's new for
+# this phase: Docker builds and a real image vulnerability gate.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: Build + scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, gateway, dashboard]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image
+        run: |
+          docker build -f apps/${{ matrix.service }}/Dockerfile \
+            -t cloudmesh-${{ matrix.service }}:${{ github.sha }} .
+
+      # Genuinely runs, no external credentials needed — scans the image
+      # that was just built locally in this job. This is the part of the
+      # design doc's "trivy image scan -> fail build on critical CVEs with
+      # a known fix" that's actually enforceable in this environment; see
+      # the deploy job below for what isn't.
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cloudmesh-${{ matrix.service }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+          exit-code: "1"
+
+  deploy:
+    name: Push + rollout
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    # This job needs a real container registry and a real Kubernetes
+    # cluster — neither exists in the environment this pipeline was
+    # authored in (the same "no live credentials" situation as every LLM
+    # provider, Stripe, and Resend adapter in this codebase). It's written
+    # as real, correct steps, not a stub, but gated off until a repo owner
+    # adds the three secrets it references (REGISTRY, REGISTRY_USERNAME/
+    # REGISTRY_PASSWORD or a cloud OIDC role, and KUBE_CONFIG) — flip
+    # `if: false` to `if: true` once those exist. Until then this job is
+    # visible in every run's summary as skipped, not silently absent.
+    if: false
+    env:
+      REGISTRY: ${{ secrets.REGISTRY }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to the registry
+        run: echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Build + push each image
+        run: |
+          for service in api gateway dashboard; do
+            docker build -f "apps/$service/Dockerfile" \
+              -t "$REGISTRY/cloudmesh-$service:${{ github.sha }}" .
+            docker push "$REGISTRY/cloudmesh-$service:${{ github.sha }}"
+          done
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Point manifests at the new images
+        run: |
+          for service in api gateway dashboard; do
+            sed -i "s|cloudmesh-$service:latest|$REGISTRY/cloudmesh-$service:${{ github.sha }}|" \
+              k8s/*.yaml
+          done
+
+      - name: Apply migrations
+        run: |
+          kubectl apply -f k8s/15-migrate-job.yaml --namespace cloudmesh
+          kubectl wait --for=condition=complete job/migrate -n cloudmesh --timeout=120s
+          kubectl delete job/migrate -n cloudmesh
+
+      - name: Rolling deploy
+        run: kubectl apply -k k8s/
+
+      # A rollout that never reaches Ready (failed readiness probes, a
+      # crash loop) makes this step block until the timeout and then exit
+      # nonzero — the design doc's "health check -> rollback if unhealthy"
+      # step. `rollingUpdate.maxUnavailable: 0` on every Deployment (see
+      # k8s/20-api.yaml etc.) means a bad rollout never actually serves
+      # traffic in the first place; the explicit `rollout undo` below
+      # covers the case where it partially succeeded before failing.
+      - name: Wait for rollout, roll back on failure
+        run: |
+          for deployment in api gateway dashboard; do
+            if ! kubectl rollout status deployment/$deployment -n cloudmesh --timeout=180s; then
+              echo "::error::$deployment failed to roll out — rolling back"
+              kubectl rollout undo deployment/$deployment -n cloudmesh
+              exit 1
+            fi
+          done

@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: cloudmesh
+  labels: { app: api }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: api }
+  # Zero-downtime rolling update: never fewer than `replicas` ready pods
+  # (maxUnavailable: 0), one extra pod during the swap (maxSurge: 1). A
+  # rollout that fails readiness never proceeds — `kubectl rollout status`
+  # blocks and exits nonzero, which is what the CI/CD workflow's "health
+  # check -> rollback" step is checking.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      containers:
+        - name: api
+          # :latest here is a placeholder for local `kubectl apply`
+          # convenience — the real CI/CD pipeline sets this to an
+          # immutable image digest/tag per build, never floating :latest
+          # in a real rollout (see .github/workflows/deploy.yml).
+          image: cloudmesh-api:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef: { name: cloudmesh-config }
+            - secretRef: { name: cloudmesh-secrets }
+          env:
+            - name: PORT
+              value: "3000"
+            - name: OTEL_SERVICE_NAME
+              value: cloudmesh-api
+          readinessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: cloudmesh
+spec:
+  selector: { app: api }
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+# Design doc: "node-api: min=2 max=10 targetCPU=70%".
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api
+  namespace: cloudmesh
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }

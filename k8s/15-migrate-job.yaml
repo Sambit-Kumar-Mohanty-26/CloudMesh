@@ -1,0 +1,33 @@
+# Applies migrations (RLS policies, pgvector extension/index, the
+# cloudmesh_app role) before any app Deployment starts. Plain manifests
+# have no install-hook concept, so this is a standalone Job — run it
+# manually after postgres is up and before applying 20+ (a Helm chart
+# would wire this as a pre-install/pre-upgrade hook instead):
+#   kubectl apply -f k8s/15-migrate-job.yaml
+#   kubectl wait --for=condition=complete job/migrate -n cloudmesh --timeout=120s
+# Re-running is safe — `prisma migrate deploy` is idempotent (skips
+# already-applied migrations).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: cloudmesh
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          # Reuses the api image — packages/db (schema, migrations, the
+          # generated Prisma client) is already present in it, same
+          # monorepo build as every other service.
+          image: cloudmesh-api:latest
+          command: ["npm", "run", "migrate:deploy", "--workspace=@cloudmesh/db"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: cloudmesh-secrets, key: DATABASE_URL }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }

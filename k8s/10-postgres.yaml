@@ -1,0 +1,72 @@
+# Single instance, not the design doc's literal "primary + 1 replica" HA
+# cluster — the spec's own text calls this out as an accepted trade-off
+# for a learning/low-cost build ("k3s instead of managed k8s... real
+# trade-offs (no HA, manual failover)"). A real production deployment
+# would use a managed Postgres (RDS/Cloud SQL) instead of self-hosting
+# replication in raw StatefulSet YAML — see k8s/COST.md.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: cloudmesh
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          # Same image as docker-compose.yml — pgvector is required for
+          # Phase 6's semantic cache (vector(1536) column + ivfflat index).
+          image: pgvector/pgvector:pg16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: cloudmesh
+            - name: POSTGRES_DB
+              value: cloudmesh
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: cloudmesh-secrets, key: POSTGRES_PASSWORD }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "cloudmesh"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "cloudmesh"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 20Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: cloudmesh
+spec:
+  # Headless — StatefulSet pods get stable DNS names
+  # (postgres-0.postgres.cloudmesh.svc.cluster.local), the standard
+  # pattern for anything that shouldn't be load-balanced across replicas.
+  clusterIP: None
+  selector: { app: postgres }
+  ports:
+    - port: 5432

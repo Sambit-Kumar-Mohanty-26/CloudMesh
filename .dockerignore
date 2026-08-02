@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+apps/dashboard/.next
+**/*.test.ts
+**/test
+notes
+runbooks
+docker
+k8s
+.git
+.github
+*.md
+package-lock.json.bak

@@ -1,0 +1,36 @@
+# Non-secret configuration — connection URLs pointing at in-cluster Service
+# DNS names, feature toggles, and third-party base URLs. Anything that's
+# actually a credential (DB passwords, JWT_SECRET, provider API keys) lives
+# in 02-secret.example.yaml instead, never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudmesh-config
+  namespace: cloudmesh
+data:
+  REDIS_URL: "redis://redis:6379"
+  NATS_URL: "nats://nats:4222"
+  CLOUDMESH_API_URL: "http://api:3000"
+  CLOUDMESH_GATEWAY_URL: "http://gateway:3001"
+
+  # Registers the no-network "mock-echo" model so the cluster is usable
+  # end-to-end without real provider credentials — same convention as local
+  # dev (see apps/gateway/.env.example). Set to "false" once real provider
+  # keys are added to the Secret.
+  ENABLE_MOCK_PROVIDER: "true"
+
+  OPENAI_BASE_URL: "https://api.openai.com"
+  ANTHROPIC_BASE_URL: "https://api.anthropic.com"
+  ANTHROPIC_VERSION: "2023-06-01"
+  GEMINI_BASE_URL: "https://generativelanguage.googleapis.com"
+  OLLAMA_BASE_URL: "http://ollama:11434"
+  RESEND_BASE_URL: "https://api.resend.com"
+  RESEND_FROM_EMAIL: "alerts@cloudmesh.dev"
+
+  # Traces export to an in-cluster OTLP collector/Jaeger — deploying
+  # Jaeger/Prometheus/Grafana themselves in-cluster is the same shape as
+  # docker-compose.yml's observability stack (Phase 12) and is left out of
+  # this manifest set on purpose: it's operational tooling, not part of the
+  # application itself, and a real deployment likely points this at a
+  # managed observability backend instead of a self-hosted Jaeger pod.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector.observability:4318"

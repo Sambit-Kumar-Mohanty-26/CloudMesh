@@ -1,0 +1,61 @@
+# Same image and flags as docker-compose.yml — -js enables JetStream
+# (Phase 10's at-least-once event bus), -sd points its stream/consumer
+# data at the mounted volume so pod restarts don't lose durable state.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: nats
+  namespace: cloudmesh
+spec:
+  serviceName: nats
+  replicas: 1
+  selector:
+    matchLabels: { app: nats }
+  template:
+    metadata:
+      labels: { app: nats }
+    spec:
+      containers:
+        - name: nats
+          image: nats:2.10-alpine
+          args: ["-js", "-m", "8222", "-sd", "/data"]
+          ports:
+            - containerPort: 4222
+              name: client
+            - containerPort: 8222
+              name: monitor
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8222 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8222 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 5Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats
+  namespace: cloudmesh
+spec:
+  clusterIP: None
+  selector: { app: nats }
+  ports:
+    - port: 4222
+      name: client
+    - port: 8222
+      name: monitor

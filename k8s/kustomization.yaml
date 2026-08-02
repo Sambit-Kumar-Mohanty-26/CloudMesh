@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cloudmesh
+resources:
+  - 00-namespace.yaml
+  - 01-configmap.yaml
+  # 02-secret.example.yaml deliberately NOT listed here — see its own
+  # header comment. Apply your real secret.local.yaml separately before
+  # `kubectl apply -k k8s/`.
+  - 10-postgres.yaml
+  - 11-redis.yaml
+  - 12-nats.yaml
+  - 20-api.yaml
+  - 21-gateway.yaml
+  - 22-gateway-worker.yaml
+  - 23-gateway-consumers.yaml
+  - 24-gateway-webhook-worker.yaml
+  - 30-dashboard.yaml
+  - 40-ingress.yaml
+  # 15-migrate-job.yaml also excluded from the default set — it's a
+  # one-shot Job meant to be applied and waited on manually between the
+  # database coming up and the app Deployments starting, not something
+  # that belongs in a single `apply -k` alongside long-running Deployments.
