@@ -31,6 +31,7 @@
     "fastify-plugin": "^6.0.0",
     "ioredis": "^5.4.1",
     "nats": "^2.29.3",
+    "tsx": "^4.19.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -38,7 +39,6 @@
     "@opentelemetry/context-async-hooks": "^2.10.0",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/node": "^22.9.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "undici": "^7.2.0",
     "vitest": "^2.1.4"

@@ -7,16 +7,6 @@
 FROM node:22-slim AS base
 WORKDIR /app
 
-# node:22-slim ships npm 10.9.8, whose own bundled dependencies (tar,
-# sigstore, among others) carry real CRITICAL/HIGH CVEs — this service's
-# CMD below runs via `npx`, so npm is a genuine runtime dependency here,
-# not just a build tool that could be stripped (contrast apps/dashboard's
-# Dockerfile, which never invokes npm at runtime and removes it instead).
-# Pinned, not `@latest`, for the same reason every other version in this
-# repo is pinned rather than left floating — see CLAUDE.md's Phase 14 CI-
-# fix notes for the exact CVEs this resolves and how it was verified.
-RUN npm install -g npm@12.0.2
-
 # Manifests only, copied before source — installs the exact same
 # dependency tree regardless of which app's Dockerfile runs, so this layer
 # is cache-shared across api/gateway/dashboard image builds and only
@@ -58,6 +48,25 @@ COPY apps/api apps/api
 # source — same `npm run generate` step CI runs before typecheck.
 RUN npm run generate --workspace=@cloudmesh/db
 
+# Everything above needs the full dev toolchain (prisma CLI to generate,
+# npm to install); nothing below does. Shipping it anyway was a real
+# vulnerability surface, not just image bloat: `vite`'s nested esbuild
+# pulls in a Go binary built against Go 1.20.12 (18 CRITICAL/HIGH stdlib
+# CVEs), and npm's own bundled `brace-expansion` carries another HIGH —
+# none of it reachable by this service, but all of it genuinely present
+# and correctly reported by the Trivy image scan.
+#
+# `tsx` survives the prune because it's a real `dependencies` entry in
+# this app's package.json (it IS this service's runtime — see the CMD
+# below), and its own esbuild (0.28.x) is current, unlike vite's pinned
+# 0.21.5. npm/npx/yarn/corepack are removed outright, same as
+# apps/dashboard's image, since the CMD calls tsx's binary directly.
+RUN npm prune --omit=dev \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+       /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-v* /root/.npm
+
 ENV NODE_ENV=production
 EXPOSE 3000
 
@@ -66,4 +75,4 @@ EXPOSE 3000
 # ConfigMap), not a baked-in .env file. `instrument.ts`, not `server.ts`
 # directly: starts the OTel SDK before anything else is imported (see
 # packages/telemetry's tracing.ts for why that ordering matters).
-CMD ["npx", "tsx", "apps/api/src/instrument.ts"]
+CMD ["node_modules/.bin/tsx", "apps/api/src/instrument.ts"]

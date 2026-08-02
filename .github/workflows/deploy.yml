@@ -39,7 +39,6 @@ jobs:
           image-ref: cloudmesh-${{ matrix.service }}:${{ github.sha }}
           severity: "CRITICAL,HIGH"
           ignore-unfixed: true
-          trivyignores: .trivyignore
           exit-code: "1"
 
   deploy:

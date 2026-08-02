@@ -12,12 +12,6 @@
 FROM node:22-slim AS base
 WORKDIR /app
 
-# See apps/api's Dockerfile for why this is here: node:22-slim's bundled
-# npm 10.9.8 carries real CVEs in its own dependencies (tar, sigstore),
-# and this image's four entry points all run via `npx` at runtime, so npm
-# can't just be stripped the way it is from apps/dashboard's image.
-RUN npm install -g npm@12.0.2
-
 COPY package.json package-lock.json ./
 COPY packages/auth/package.json packages/auth/package.json
 COPY packages/billing/package.json packages/billing/package.json
@@ -49,9 +43,18 @@ COPY apps/gateway apps/gateway
 
 RUN npm run generate --workspace=@cloudmesh/db
 
+# Drops the dev toolchain (and npm itself) from the shipped image — see
+# apps/api's Dockerfile for the full reasoning and the specific CVEs this
+# removes rather than suppresses.
+RUN npm prune --omit=dev \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+       /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-v* /root/.npm
+
 ENV NODE_ENV=production
 EXPOSE 3001
 
 # Default to the HTTP server; k8s Deployments for the worker/consumers/
 # webhook-worker processes override this with their own `args`.
-CMD ["npx", "tsx", "apps/gateway/src/instrument.ts", "server"]
+CMD ["node_modules/.bin/tsx", "apps/gateway/src/instrument.ts", "server"]

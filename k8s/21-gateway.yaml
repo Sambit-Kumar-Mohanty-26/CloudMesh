@@ -23,7 +23,7 @@ spec:
           # Explicit — the image's own default CMD already runs "server",
           # stated here so this Deployment reads the same way as the
           # worker/consumers/webhook-worker ones below that override it.
-          command: ["npx", "tsx", "apps/gateway/src/instrument.ts", "server"]
+          command: ["node_modules/.bin/tsx", "apps/gateway/src/instrument.ts", "server"]
           ports:
             - containerPort: 3001
           envFrom:

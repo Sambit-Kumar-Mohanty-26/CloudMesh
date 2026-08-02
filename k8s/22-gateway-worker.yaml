@@ -22,7 +22,7 @@ spec:
       containers:
         - name: gateway-worker
           image: cloudmesh-gateway:latest
-          command: ["npx", "tsx", "apps/gateway/src/instrument.ts", "worker"]
+          command: ["node_modules/.bin/tsx", "apps/gateway/src/instrument.ts", "worker"]
           envFrom:
             - configMapRef: { name: cloudmesh-config }
             - secretRef: { name: cloudmesh-secrets }
