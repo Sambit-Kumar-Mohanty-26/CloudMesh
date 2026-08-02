@@ -22,11 +22,11 @@
     "db:studio": "npm run studio --workspace=@cloudmesh/db"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.5",
-    "eslint": "^9.39.5",
-    "eslint-config-prettier": "^9.1.2",
-    "prettier": "^3.9.5",
-    "typescript-eslint": "^8.64.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.65.0"
   },
   "overrides": {
     "dompurify": "^3.4.12",
