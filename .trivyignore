@@ -1,0 +1,24 @@
+# Per-CVE exceptions only — see CLAUDE.md's CI-fix notes for the reasoning
+# behind each entry. Never add a blanket suppression here; every line below
+# must name a specific CVE with a specific, verified reason.
+
+# CVE-2026-53571 (vite, HIGH) and CVE-2026-47429 (vitest, CRITICAL): the
+# same dev-tooling chain ci.yml's `npm audit --omit=dev` already excludes
+# with identical reasoning ("dev tooling... carries known advisories in
+# code paths this project never runs (a dev server we don't start)").
+# apps/api and apps/gateway's Dockerfiles run a full `npm ci` (not
+# `--omit=dev`), because tsx/typescript ARE genuine runtime dependencies
+# there (no separate tsc build step — see CLAUDE.md's Phase 14 notes), so
+# vitest/vite ship into the image as a side effect, unlike npm audit which
+# is scoped to skip them.
+#
+# Verified via GitHub's security-advisories API, not assumed: CVE-2026-
+# 53571 is a `server.fs.deny` bypass requiring Vite's own dev server (`vite
+# dev`) to be actively running and network-reachable; CVE-2026-47429 is an
+# arbitrary-file-read requiring Vitest's UI server (`vitest --ui`) to be
+# listening. Neither this codebase's Dockerfiles nor its CI ever start
+# either server — tests run via `vitest run`, non-interactively, with no
+# server exposed. vite here is used exclusively as vitest's internal
+# transform engine.
+CVE-2026-53571
+CVE-2026-47429
