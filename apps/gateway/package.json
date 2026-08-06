@@ -31,7 +31,7 @@
     "fastify-plugin": "^6.0.0",
     "ioredis": "^5.4.1",
     "nats": "^2.29.3",
-    "tsx": "^4.19.0",
+    "tsx": "^4.23.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
