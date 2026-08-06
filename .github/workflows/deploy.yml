@@ -72,7 +72,7 @@ jobs:
           done
 
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v4
+        uses: azure/k8s-set-context@v5
         with:
           method: kubeconfig
           kubeconfig: ${{ secrets.KUBE_CONFIG }}
