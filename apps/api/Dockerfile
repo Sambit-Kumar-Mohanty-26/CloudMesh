@@ -56,6 +56,15 @@ RUN npm run generate --workspace=@cloudmesh/db
 # none of it reachable by this service, but all of it genuinely present
 # and correctly reported by the Trivy image scan.
 #
+# Everything above this line is the `base` stage, and it is ALSO a real
+# build target: `k8s/15-migrate-job.yaml` needs the Prisma CLI (a
+# devDependency of packages/db) and npm, both of which the prune below
+# deliberately destroys. Build the migration image with:
+#   docker build -f apps/api/Dockerfile --target base -t cloudmesh-migrator .
+# Without this split the migrate Job fails at startup with "prisma: not
+# found" — the runtime image genuinely cannot run migrations, by design.
+FROM base AS runtime
+
 # `tsx` survives the prune because it's a real `dependencies` entry in
 # this app's package.json (it IS this service's runtime — see the CMD
 # below), and its own esbuild (0.28.x) is current, unlike vite's pinned

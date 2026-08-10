@@ -12,6 +12,7 @@ import type { Redis } from "ioredis";
 import { ZodError } from "zod";
 import { env } from "../../env.js";
 import { ProviderError, ServiceUnavailableError, ValidationError } from "../../errors.js";
+import { emitProviderDegradedEvent } from "../../lib/platformEvents.js";
 import {
   enforceBudget,
   maybePublishBudgetWarning,
@@ -386,6 +387,19 @@ export default async function chatRoutes(fastify: FastifyInstance) {
             resolved.providerModel,
             String(err.statusCode),
             startedAtMs,
+          );
+          // Phase 11's `provider.degraded` event, finally given a live
+          // publisher. Emitted here rather than inside lib/resilience.ts
+          // because this is the innermost frame that still knows which org
+          // the request belonged to — the circuit breaker itself is a
+          // shared, org-less primitive. Deduped per org+provider and
+          // error-swallowing (see lib/platformEvents.ts), so it cannot
+          // turn this 502/503 into a 500.
+          await emitProviderDegradedEvent(
+            request.server.redis,
+            orgId,
+            resolved.providerModel,
+            err.code,
           );
           return providerFailureBody(err);
         }

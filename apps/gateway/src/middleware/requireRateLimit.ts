@@ -3,6 +3,7 @@ import { tokenBucket } from "@cloudmesh/rate-limiter";
 import { withSpan } from "@cloudmesh/telemetry";
 import type { FastifyRequest } from "fastify";
 import { RateLimitError } from "../errors.js";
+import { emitRateLimitedEvent } from "../lib/platformEvents.js";
 
 /**
  * Enforces api_keys.rate_limit_rpm (present since Phase 1, never actually
@@ -34,7 +35,17 @@ export async function requireRateLimit(request: FastifyRequest): Promise<void> {
 
     if (!result.allowed) {
       rateLimitRejectedTotal.inc({ org: ctx.orgId });
-      throw new RateLimitError((result.resetAt - Date.now()) / 1000);
+      const retryAfterSeconds = (result.resetAt - Date.now()) / 1000;
+
+      // Awaited, not fire-and-forget: this repo has been bitten twice by
+      // unawaited post-response work racing whatever the caller does next
+      // (Phase 6's cache write, Phase 7's streaming bookkeeping). It's a
+      // Redis SET that short-circuits on all but the first rejection in
+      // the window, and it swallows its own errors, so it cannot fail or
+      // meaningfully delay the 429.
+      await emitRateLimitedEvent(request.server.redis, ctx.orgId, ctx.apiKeyId, retryAfterSeconds);
+
+      throw new RateLimitError(retryAfterSeconds);
     }
   });
 }

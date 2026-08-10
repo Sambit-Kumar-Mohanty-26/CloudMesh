@@ -34,6 +34,15 @@ spec:
               value: "http://api:3000"
             - name: CLOUDMESH_GATEWAY_URL
               value: "http://gateway:3001"
+            # Encrypts this app's own session cookie (AES-256-GCM, see
+            # src/lib/sessionCrypto.ts). Required — reading or writing a
+            # session throws without it rather than silently storing the
+            # refresh token in cleartext. All replicas must share the same
+            # value or a user's cookie stops decrypting when they land on
+            # a different pod.
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef: { name: cloudmesh-secrets, key: SESSION_SECRET }
           readinessProbe:
             httpGet: { path: /login, port: 3002 }
             initialDelaySeconds: 5

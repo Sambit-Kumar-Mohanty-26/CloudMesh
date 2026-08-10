@@ -19,15 +19,35 @@ spec:
       restartPolicy: Never
       containers:
         - name: migrate
-          # Reuses the api image — packages/db (schema, migrations, the
-          # generated Prisma client) is already present in it, same
-          # monorepo build as every other service.
-          image: cloudmesh-api:latest
-          command: ["npm", "run", "migrate:deploy", "--workspace=@cloudmesh/db"]
+          # NOT cloudmesh-api:latest. That image runs `npm prune
+          # --omit=dev` and deletes npm itself, which removes the Prisma
+          # CLI (a devDependency of packages/db) — migrations genuinely
+          # cannot run from it. This is the `base` target of the same
+          # Dockerfile, built before that prune:
+          #   docker build -f apps/api/Dockerfile --target base \
+          #     -t cloudmesh-migrator:latest .
+          image: cloudmesh-migrator:latest
+          # Two steps, in this order and in one shell so the Job's
+          # completion means BOTH finished:
+          #   1. migrate:deploy — idempotent, safe to re-run.
+          #   2. db:rotate-app-password — replaces the bootstrap literal
+          #      'cloudmesh_app' password (hardcoded in the Phase 1
+          #      migration, which cannot read env vars) with the real
+          #      secret. Also idempotent: it just re-ALTERs the role.
+          # Both run as the superuser DATABASE_URL; cloudmesh_app cannot
+          # alter its own role.
+          command: ["sh", "-c"]
+          args:
+            - >-
+              npm run migrate:deploy --workspace=@cloudmesh/db &&
+              npm run db:rotate-app-password --workspace=@cloudmesh/db
           env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef: { name: cloudmesh-secrets, key: DATABASE_URL }
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: cloudmesh-secrets, key: APP_DB_PASSWORD }
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "500m", memory: "256Mi" }

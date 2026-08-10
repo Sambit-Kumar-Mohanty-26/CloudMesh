@@ -9,6 +9,7 @@
     "migrate:dev": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "seed": "tsx prisma/seed.ts",
+    "db:rotate-app-password": "tsx scripts/rotateAppPassword.ts",
     "studio": "prisma studio",
     "typecheck": "tsc --noEmit"
   },

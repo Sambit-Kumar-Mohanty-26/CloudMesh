@@ -1,6 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "./env";
+import { decryptSession, encryptSession } from "./sessionCrypto";
 
 export interface Session {
   accessToken: string;
@@ -17,21 +18,25 @@ export interface Session {
  * this cookie (on the DASHBOARD's own origin) to carry the session across
  * page loads.
  *
- * Deliberately NOT signed/encrypted. It's httpOnly (never readable by
- * browser JS — an XSS bug can't exfiltrate it via document.cookie), and
- * every value inside it is independently re-verified server-side on every
- * use: apps/api checks the JWT's own signature on each proxied call, so a
- * tampered accessToken just fails auth (401) — it can never forge access
- * to a different org. Tampering can only break your own session, not
- * escalate privilege. A real production build would still reach for
- * next-iron-session or similar for defense in depth; not required for
- * this phase's scope.
+ * The cookie is httpOnly (never readable by browser JS — an XSS bug can't
+ * exfiltrate it via document.cookie) AND encrypted with AES-256-GCM (see
+ * ./sessionCrypto). Phase 13 originally shipped it as plaintext JSON, on
+ * the reasoning that every value inside is independently re-verified by
+ * apps/api on each call — a tampered accessToken just 401s, so tampering
+ * could break your own session but never forge access to another org.
+ * That reasoning was sound and still holds; the encryption is defense in
+ * depth on top of it, keeping the refresh token out of cleartext at rest
+ * and failing tampering closed at this boundary rather than one hop later.
  */
 export async function getSession(): Promise<Session | undefined> {
   const raw = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!raw) return undefined;
+
+  const plaintext = decryptSession(raw);
+  if (!plaintext) return undefined;
+
   try {
-    return JSON.parse(raw) as Session;
+    return JSON.parse(plaintext) as Session;
   } catch {
     return undefined;
   }
@@ -41,7 +46,7 @@ export async function getSession(): Promise<Session | undefined> {
  *  called during a Server Component's render, since cookies can't be
  *  mutated mid-render. */
 export async function setSession(session: Session): Promise<void> {
-  (await cookies()).set(SESSION_COOKIE, JSON.stringify(session), {
+  (await cookies()).set(SESSION_COOKIE, encryptSession(JSON.stringify(session)), {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
