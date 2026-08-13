@@ -11,7 +11,7 @@
   "dependencies": {
     "@cloudmesh/db": "*",
     "@cloudmesh/outbox": "*",
-    "bullmq": "^5.81.2",
+    "bullmq": "^6.0.9",
     "ioredis": "^5.4.1"
   },
   "devDependencies": {
