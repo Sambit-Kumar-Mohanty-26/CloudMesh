@@ -1,0 +1,33 @@
+{
+  "name": "@cloudmesh/sdk",
+  "version": "0.1.0",
+  "description": "Official JavaScript/TypeScript SDK for the CloudMesh AI gateway.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "keywords": [
+    "cloudmesh",
+    "ai",
+    "llm",
+    "gateway",
+    "openai",
+    "anthropic",
+    "gemini"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.4"
+  }
+}

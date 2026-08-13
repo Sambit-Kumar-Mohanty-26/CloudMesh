@@ -5,3 +5,7 @@ next-env.d.ts
 notes/
 packages/db/prisma/migrations
 package-lock.json
+
+# Python SDK build artifacts
+.pytest_cache/
+__pycache__/

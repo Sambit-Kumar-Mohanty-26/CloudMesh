@@ -31,6 +31,9 @@ packages/metrics/              Prometheus metrics (prom-client) + /metrics route
 docker/                          Prometheus scrape config + Grafana datasource/dashboard provisioning
 runbooks/                        On-call runbooks for the three alerts wired against real metrics
 k8s/                              Kubernetes manifests, infra cost estimate (see k8s/README.md)
+packages/openapi/                 OpenAPI 3.1 document, generated from the real Zod schemas
+packages/sdk/                     official JavaScript/TypeScript SDK (see its README)
+sdk-python/                       official Python SDK (see its README)
 notes/                          Original project spec (read-only reference)
 ```
 
@@ -175,6 +178,35 @@ Integration tests hit a real Postgres + Redis + NATS (the same
 npm test                       # every workspace
 npm test --workspace=@cloudmesh/api   # just the API
 ```
+
+## API reference
+
+The gateway serves its own OpenAPI 3.1 document and an interactive Swagger
+UI:
+
+| URL             | What                          |
+| --------------- | ----------------------------- |
+| `/openapi.json` | The OpenAPI 3.1 document      |
+| `/docs`         | Swagger UI, with "Try it out" |
+
+Both are unauthenticated on purpose — a developer needs to read the docs
+_before_ they have credentials, and the document contains no tenant data.
+
+The spec is generated from the same Zod schemas the route handlers validate
+with (via Zod 4's native `z.toJSONSchema()`), so a documented request body
+is by construction the one the server enforces. Set `PUBLIC_BASE_URL` so
+"Try it out" targets your real host rather than localhost.
+
+## SDKs
+
+```bash
+npm install @cloudmesh/sdk     # JavaScript / TypeScript
+pip install cloudmesh-sdk      # Python
+```
+
+Both cover chat (including streaming), model discovery and async jobs, map
+HTTP failures onto typed errors, and retry `429`/`5xx` while honouring
+`Retry-After`. See `packages/sdk/README.md` and `sdk-python/README.md`.
 
 ## Quality gates
 

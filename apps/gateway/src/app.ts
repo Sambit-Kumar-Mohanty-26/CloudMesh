@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { env } from "./env.js";
 import { AppError } from "./errors.js";
 import chatRoutes from "./modules/chat/routes.js";
+import docsRoutes from "./modules/docs/routes.js";
 import jobRoutes from "./modules/jobs/routes.js";
 import jobWsRoutes from "./modules/jobs/wsRoutes.js";
 import dbPlugin from "./plugins/db.js";
@@ -50,6 +51,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     reply.code(500).send({ error: "Internal server error", code: "INTERNAL_ERROR" });
   });
 
+  await app.register(docsRoutes);
   await app.register(chatRoutes);
   await app.register(jobRoutes);
   await app.register(jobWsRoutes);

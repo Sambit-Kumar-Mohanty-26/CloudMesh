@@ -7,6 +7,12 @@ const schema = z.object({
   REDIS_URL: z.string().url(),
   PORT: z.coerce.number().int().positive().default(3001),
 
+  // The externally reachable base URL, used only as the `servers` entry in
+  // the OpenAPI document so Swagger UI's "Try it out" targets the right
+  // host. Defaults to local dev; set it to the public URL in a real
+  // deployment or the docs page will tell developers to call localhost.
+  PUBLIC_BASE_URL: z.string().url().default("http://localhost:3001"),
+
   // Provider credentials are optional: this gateway must be able to boot
   // (and its non-provider-specific tests must run) without any real LLM
   // API keys configured. An adapter invoked without its key fails that one

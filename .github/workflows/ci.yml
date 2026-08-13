@@ -125,6 +125,12 @@ jobs:
       - run: npm test --workspace=@cloudmesh/telemetry
       - run: npm test --workspace=@cloudmesh/metrics
       - run: npm test --workspace=@cloudmesh/billing
+      # packages/openapi (OpenAPI document generation from the same Zod
+      # schemas the handlers validate with) and packages/sdk (the public
+      # JS client, tested against a stubbed fetch) are both pure — no DB,
+      # Redis or network.
+      - run: npm test --workspace=@cloudmesh/openapi
+      - run: npm test --workspace=@cloudmesh/sdk
       # packages/events has both pure schema tests and real JetStream
       # integration tests — hence the NATS step above.
       - run: npm test --workspace=@cloudmesh/events
@@ -151,3 +157,14 @@ jobs:
       # BFF auth/proxy flow it exercises is otherwise only verified by
       # actually running the stack (Phase 13 notes), not by CI.
       - run: npm test --workspace=@cloudmesh/dashboard
+
+      # The Python SDK is a separate toolchain from the npm workspaces, so
+      # it needs its own setup step. Zero runtime dependencies (built on
+      # urllib), so only pytest is installed; its tests run against a real
+      # http.server on loopback rather than a mocked transport.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: python -m pytest tests/ -q
+        working-directory: sdk-python

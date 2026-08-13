@@ -9,3 +9,8 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Python SDK build artifacts
+__pycache__/
+*.pyc
+.pytest_cache/

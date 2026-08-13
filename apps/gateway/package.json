@@ -21,6 +21,7 @@
     "@cloudmesh/events": "*",
     "@cloudmesh/jobs": "*",
     "@cloudmesh/metrics": "*",
+    "@cloudmesh/openapi": "*",
     "@cloudmesh/outbox": "*",
     "@cloudmesh/rate-limiter": "*",
     "@cloudmesh/telemetry": "*",
