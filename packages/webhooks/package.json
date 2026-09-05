@@ -11,7 +11,7 @@
   "dependencies": {
     "@cloudmesh/db": "*",
     "bullmq": "^5.81.2",
-    "ioredis": "^5.4.1"
+    "ioredis": "^6.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
