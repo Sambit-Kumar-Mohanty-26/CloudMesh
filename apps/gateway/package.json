@@ -33,7 +33,7 @@
     "ioredis": "^5.4.1",
     "nats": "^2.29.3",
     "tsx": "^4.19.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@opentelemetry/api": "^1.9.1",
