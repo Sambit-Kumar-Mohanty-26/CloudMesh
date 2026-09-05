@@ -210,6 +210,75 @@ describe("async job queue (Phase 9)", () => {
       expect(final.result).toEqual({ responses: ["echo: one", "echo: two"] });
     });
 
+    it("bills every prompt in a bulk_chat job to the key that submitted it", async () => {
+      const { rawKey, orgId } = await createTestApiKey();
+      const apiKey = await admin.apiKey.findFirstOrThrow({ where: { orgId } });
+      const submit = await app.inject({
+        method: "POST",
+        url: "/v1/jobs",
+        headers: { authorization: `Bearer ${rawKey}` },
+        payload: {
+          type: "bulk_chat",
+          payload: { model: "mock-echo", prompts: ["one", "two"] },
+        },
+      });
+      const jobId = submit.json().job_id as string;
+
+      startWorker();
+      const final = await waitForStatus(app, rawKey, jobId, ["COMPLETED", "DEAD_LETTER"]);
+      expect(final.status).toBe("COMPLETED");
+
+      const records = await admin.usageRecord.findMany({
+        where: { orgId },
+        orderBy: { requestId: "asc" },
+      });
+      // One per prompt, not one per job — a 100-prompt job is 100 provider
+      // calls and must bill as 100.
+      expect(records).toHaveLength(2);
+      // Attributed to the submitting key, which the worker can only know
+      // because jobs.api_key_id captured it at submission.
+      expect(records.every((r) => r.apiKeyId === apiKey.id)).toBe(true);
+      expect(records.map((r) => r.requestId)).toEqual([`job:${jobId}:0`, `job:${jobId}:1`]);
+    });
+
+    it("does not double-bill a replayed job", async () => {
+      const { rawKey, orgId } = await createTestApiKey();
+      const submit = await app.inject({
+        method: "POST",
+        url: "/v1/jobs",
+        headers: { authorization: `Bearer ${rawKey}` },
+        payload: {
+          type: "bulk_chat",
+          payload: { model: "mock-echo", prompts: ["one", "two"] },
+        },
+      });
+      const jobId = submit.json().job_id as string;
+
+      startWorker();
+      await waitForStatus(app, rawKey, jobId, ["COMPLETED", "DEAD_LETTER"]);
+      expect(await admin.usageRecord.count({ where: { orgId } })).toBe(2);
+
+      // Replay only accepts DEAD_LETTER. Forcing the status here reproduces
+      // what a genuine exhausted-retry job looks like without waiting out
+      // three real failures — the point under test is the second execution's
+      // billing, not how the row got to DEAD_LETTER.
+      await admin.job.update({ where: { id: jobId }, data: { status: "DEAD_LETTER" } });
+      const replay = await app.inject({
+        method: "POST",
+        url: `/v1/jobs/${jobId}/replay`,
+        headers: { authorization: `Bearer ${rawKey}` },
+      });
+      expect(replay.statusCode).toBe(202);
+
+      await waitForStatus(app, rawKey, jobId, ["COMPLETED", "DEAD_LETTER"]);
+
+      // Still 2, not 4. Replay re-enqueues the ORIGINAL row, so the
+      // requestId derived from (jobId, promptIndex) is byte-identical and
+      // Phase 7's UNIQUE(request_id) + ON CONFLICT DO NOTHING drops the
+      // repeats. A provider-response-id-derived key would have billed twice.
+      expect(await admin.usageRecord.count({ where: { orgId } })).toBe(2);
+    });
+
     it("records progress as the job advances, not just 0 then 100", async () => {
       const { rawKey, orgId } = await createTestApiKey();
       const submit = await app.inject({

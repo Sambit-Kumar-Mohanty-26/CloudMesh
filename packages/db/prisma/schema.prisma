@@ -142,6 +142,7 @@ model ApiKey {
 
   organization Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
   usageRecords UsageRecord[]
+  jobs         Job[]
 
   @@index([orgId])
   @@map("api_keys")
@@ -203,6 +204,13 @@ enum JobStatus {
 model Job {
   id        String    @id @default(uuid()) @db.Uuid
   orgId     String    @map("org_id") @db.Uuid
+  // The key that submitted the job, captured at submission because the
+  // worker runs minutes later with no request context of its own. Without
+  // it a job's provider calls cannot be billed at all — usage_records
+  // requires a NOT NULL api_key_id. Nullable for two real cases: rows
+  // predating this column, and a key deleted while its job history remains
+  // (SetNull, not Cascade — deleting a key must not erase job history).
+  apiKeyId  String?   @map("api_key_id") @db.Uuid
   // The BullMQ job id, so a row can be tied back to its queue entry (and
   // vice versa) for DLQ replay. Nullable only for the brief window between
   // the row insert and the enqueue returning.
@@ -229,6 +237,7 @@ model Job {
   finishedAt DateTime? @map("finished_at")
 
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  apiKey       ApiKey?      @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
 
   @@index([orgId, createdAt])
   @@index([orgId, status])

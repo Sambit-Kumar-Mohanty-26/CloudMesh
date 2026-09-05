@@ -315,12 +315,20 @@ export default async function chatRoutes(fastify: FastifyInstance) {
       let fromCache = false;
       try {
         if (flags.semantic_cache) {
-          const embedding = await request.server.embeddings.embed(promptText(input.messages));
+          // Memoized and lazy: an exact prompt_hash repeat is answered by
+          // the cheap indexed lookup inside lookupCache, so the embedding
+          // API call is never made at all. Only a hash miss (which then
+          // needs the pgvector search, and the cache write if that misses
+          // too) pays for one — and both of those reuse this same vector.
+          let embeddingPromise: Promise<number[]> | undefined;
+          const embed = () =>
+            (embeddingPromise ??= request.server.embeddings.embed(promptText(input.messages)));
+
           const cached = await withSpan(
             "semantic_cache",
             { orgId, model: resolved.providerModel },
             (span) =>
-              lookupCache(request.server.db, orgId, resolved.providerModel, promptHash, embedding, {
+              lookupCache(request.server.db, orgId, resolved.providerModel, promptHash, embed, {
                 similarityThreshold: env.SEMANTIC_CACHE_SIMILARITY_THRESHOLD,
                 ttlDays: flags.cache_ttl_days ?? env.SEMANTIC_CACHE_TTL_DAYS,
               }).then((result) => {
@@ -348,7 +356,7 @@ export default async function chatRoutes(fastify: FastifyInstance) {
               orgId,
               resolved.providerModel,
               promptHash,
-              embedding,
+              await embed(),
               JSON.stringify(response),
             ).catch((err: unknown) => {
               // Deliberately not logging `err` itself (or its .message) -

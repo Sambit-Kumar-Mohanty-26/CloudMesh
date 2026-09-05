@@ -1,3 +1,5 @@
+import type { PrismaClient } from "@cloudmesh/db";
+
 /** The design doc's exact priority scale. Lower number = higher priority,
  *  which is also BullMQ's own convention, so these map straight through to
  *  `priority` on the queue without translation. */
@@ -55,6 +57,17 @@ export interface JobData {
 export interface JobHandlerContext {
   jobRecordId: string;
   orgId: string;
+  /** The key that submitted the job, captured at submission — the worker
+   *  has no request of its own to read one from. Null for rows predating
+   *  the column, or whose key was since deleted; a handler that bills must
+   *  skip billing in that case rather than invent one, since
+   *  usage_records.api_key_id is a real NOT NULL foreign key. */
+  apiKeyId: string | null;
+  /** The worker's own RLS-bound client. Handlers that write tenant data
+   *  (billing a provider call, say) use this rather than opening a second
+   *  connection per job — see queue.ts on why the worker never queries
+   *  `jobs` unscoped. */
+  db: PrismaClient;
   /** Reports 0-100 progress: persists to the jobs row and publishes to
    *  Redis pub/sub for the WebSocket bridge. */
   reportProgress: (percent: number) => Promise<void>;

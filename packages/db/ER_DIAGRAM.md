@@ -234,6 +234,18 @@ current_setting('app.current_org')`. Verified against a live DB
   connects as `cloudmesh_app`, never the migration superuser) — an unscoped
   read there returns zero rows rather than erroring, which is a silent
   failure mode worth knowing about.
+
+  `jobs.api_key_id`
+  (`packages/db/prisma/migrations/20260903100000_add_job_api_key`) exists so
+  the worker can bill a job's provider calls: `usage_records.api_key_id` is
+  NOT NULL, and by the time a worker runs the submitting HTTP request is
+  long gone, so the key has to be captured at submission or the work is
+  unbillable. Nullable (rows predate the column) with `ON DELETE SET NULL`,
+  not CASCADE — deleting a rotated key must not erase job history. Handlers
+  bill under a requestId derived from `(jobId, promptIndex)`, so a retried
+  job re-derives identical ids and Phase 7's `UNIQUE(request_id)` +
+  `ON CONFLICT DO NOTHING` drops the repeats instead of double-billing.
+
 - **Event bus (Phase 10)**: `audit_log` is written by the NATS audit
   subscriber and carries the same `tenant_isolation` RLS policy as every
   other tenant table

@@ -179,6 +179,13 @@ npm test                       # every workspace
 npm test --workspace=@cloudmesh/api   # just the API
 ```
 
+## Documentation
+
+| Document                                         | For whom                    |
+| ------------------------------------------------ | --------------------------- |
+| [packages/sdk/README.md](packages/sdk/README.md) | JavaScript / TypeScript SDK |
+| [sdk-python/README.md](sdk-python/README.md)     | Python SDK                  |
+
 ## API reference
 
 The gateway serves its own OpenAPI 3.1 document and an interactive Swagger

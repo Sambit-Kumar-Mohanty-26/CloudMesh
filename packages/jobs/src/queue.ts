@@ -75,7 +75,10 @@ export function createJobWorker(
       // at all (the policy hides the row rather than erroring) and every
       // job would run against a null payload.
       const row = await withTenant(db, orgId, (tx) =>
-        tx.job.findFirst({ where: { id: jobRecordId, orgId }, select: { payload: true } }),
+        tx.job.findFirst({
+          where: { id: jobRecordId, orgId },
+          select: { payload: true, apiKeyId: true },
+        }),
       );
       if (!row) {
         throw new Error(`Job record ${jobRecordId} not found for org`);
@@ -85,6 +88,8 @@ export function createJobWorker(
       const result = await handler.run(handler.parsePayload(payload) as never, {
         jobRecordId,
         orgId,
+        apiKeyId: row.apiKeyId,
+        db,
         reportProgress: (percent: number) =>
           updateJobProgress(db, pubRedis, jobRecordId, orgId, percent),
       });

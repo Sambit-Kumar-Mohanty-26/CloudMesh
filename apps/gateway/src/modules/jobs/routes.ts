@@ -9,6 +9,9 @@ import {
 import type { FastifyInstance } from "fastify";
 import { ZodError } from "zod";
 import { NotFoundError, ValidationError } from "../../errors.js";
+import { env } from "../../env.js";
+import { enforceBudget } from "../../lib/billing.js";
+import { getOrgFeatureFlags } from "../../lib/featureFlags.js";
 import { requireApiKey } from "../../middleware/requireApiKey.js";
 import { requireRateLimit } from "../../middleware/requireRateLimit.js";
 import { createJobSchema, listJobsQuerySchema } from "./schemas.js";
@@ -70,7 +73,7 @@ export default async function jobRoutes(fastify: FastifyInstance) {
       throw err;
     }
 
-    const orgId = request.apiKeyCtx!.orgId;
+    const { orgId, apiKeyId } = request.apiKeyCtx!;
 
     // Validate BOTH the type and its payload before enqueueing. A job that
     // can never succeed must fail at submission with a 400, not burn three
@@ -89,8 +92,28 @@ export default async function jobRoutes(fastify: FastifyInstance) {
     // Throws ValidationError (-> 400) on a malformed payload.
     handler.parsePayload(input.payload as never);
 
+    // Checked once, here — not per prompt inside the worker. A job's cost
+    // isn't knowable at submission (token counts don't exist until each
+    // call returns), so this only refuses to accept work for an org that is
+    // ALREADY out of budget; a long job can still overrun mid-run. That is
+    // the same bounded-overshoot trade-off lib/billingLock.ts documents for
+    // the chat path, not a new one. Closing it properly needs a reservation
+    // system (reserve an estimated max upfront, reconcile after), which is
+    // its own piece of work.
+    const flags = await getOrgFeatureFlags(request.server.db, request.server.redis, orgId);
+    if (flags.billing_enforcement) {
+      await enforceBudget(request.server.db, request.server.redis, orgId, {
+        ttlMs: env.BILLING_LOCK_TTL_MS,
+        retries: env.BILLING_LOCK_RETRIES,
+        retryDelayMs: env.BILLING_LOCK_RETRY_DELAY_MS,
+      });
+    }
+
     const job = await createJob(request.server.db, request.server.jobQueue, {
       orgId,
+      // Captured now because the worker runs with no request of its own —
+      // this is the only moment the submitting key is known.
+      apiKeyId,
       type: input.type,
       payload: input.payload,
       priority: input.priority,

@@ -70,6 +70,17 @@ jobs:
               -t "$REGISTRY/cloudmesh-$service:${{ github.sha }}" .
             docker push "$REGISTRY/cloudmesh-$service:${{ github.sha }}"
           done
+          # The migrate Job below runs `prisma migrate deploy`, which needs
+          # npm and the Prisma CLI — both deleted from the runtime images by
+          # `npm prune --omit=dev`. apps/api/Dockerfile's pre-prune `base`
+          # stage still has them. Deliberately NOT in the Trivy matrix
+          # above: it is the un-pruned image, so it still carries the dev
+          # toolchain CVEs that prune exists to remove (vite's pinned
+          # esbuild, npm's bundled brace-expansion). It runs as a one-shot
+          # Job with no listening port and is deleted immediately after,
+          # unlike the three long-lived services the gate protects.
+          docker build -f apps/api/Dockerfile --target base -t "$REGISTRY/cloudmesh-migrator:${{ github.sha }}" .
+          docker push "$REGISTRY/cloudmesh-migrator:${{ github.sha }}"
 
       - name: Configure kubectl
         uses: azure/k8s-set-context@v4
@@ -79,7 +90,7 @@ jobs:
 
       - name: Point manifests at the new images
         run: |
-          for service in api gateway dashboard; do
+          for service in api gateway dashboard migrator; do
             sed -i "s|cloudmesh-$service:latest|$REGISTRY/cloudmesh-$service:${{ github.sha }}|" \
               k8s/*.yaml
           done

@@ -1,6 +1,7 @@
-import { JobRegistry, type JobHandler } from "@cloudmesh/jobs";
+import { JobRegistry, type JobHandler, type JobHandlerContext } from "@cloudmesh/jobs";
 import { z } from "zod";
 import { ValidationError } from "../../errors.js";
+import { recordUsageAndOutbox } from "../../lib/billing.js";
 import type { EmbeddingProvider } from "../../providers/embeddings.js";
 import type { ModelRegistry } from "../../providers/index.js";
 
@@ -61,14 +62,47 @@ export function batchEmbeddingsHandler(
 }
 
 /**
- * Runs a list of prompts through the normal provider registry. Deliberately
- * NOT wired through the chat route's full pipeline (budget enforcement,
- * semantic cache, rate limiting): those are per-request HTTP concerns, and
- * silently re-entering them from a background worker would double-count
- * usage and consume the submitting org's rate-limit budget minutes after
- * their request already returned. Billing for job-driven provider calls is
- * a real gap and belongs to whichever phase makes async work billable —
- * flagged rather than half-built here.
+ * Bills one prompt's provider call against the submitting key.
+ *
+ * The requestId is derived from (jobRecordId, promptIndex) rather than the
+ * provider's own response id, and that is the whole retry-safety story: a
+ * job that dies on prompt 40 of 100 and is retried from scratch produces
+ * byte-identical requestIds for prompts 0-39, so Phase 7's existing
+ * UNIQUE(request_id) + ON CONFLICT DO NOTHING silently drops the repeats.
+ * Using the provider's id would generate a fresh one per attempt and bill
+ * the same work up to three times.
+ *
+ * A null apiKeyId (a row predating the column, or a since-deleted key)
+ * skips billing rather than failing the job — usage_records.api_key_id is a
+ * real foreign key and there is nothing valid to put there. The work still
+ * completed; refusing to deliver it because it cannot be billed would be
+ * the worse failure.
+ */
+async function billJobUsage(
+  ctx: JobHandlerContext,
+  model: string,
+  promptIndex: number,
+  usage: { promptTokens: number; completionTokens: number } | undefined,
+): Promise<void> {
+  if (!ctx.apiKeyId || !usage) return;
+  await recordUsageAndOutbox(ctx.db, {
+    orgId: ctx.orgId,
+    apiKeyId: ctx.apiKeyId,
+    model,
+    usage,
+    requestId: `job:${ctx.jobRecordId}:${promptIndex}`,
+  });
+}
+
+/**
+ * Runs a list of prompts through the normal provider registry, billing each
+ * completed call (see billJobUsage). Deliberately still NOT wired through
+ * the chat route's full pipeline (semantic cache, rate limiting): those are
+ * per-request HTTP concerns, and re-entering them from a background worker
+ * would consume the submitting org's rate-limit budget minutes after their
+ * request already returned. Budget is checked once at submission instead
+ * (see modules/jobs/routes.ts) — a long job can still overrun it, the same
+ * bounded-overshoot trade-off Phase 7's billing lock already documents.
  */
 export function bulkChatHandler(
   models: ModelRegistry,
@@ -90,6 +124,7 @@ export function bulkChatHandler(
           stream: false,
         });
         responses.push(res.message.content);
+        await billJobUsage(ctx, resolved.providerModel, i, res.usage);
         await ctx.reportProgress(((i + 1) / payload.prompts.length) * 100);
       }
       return { responses };

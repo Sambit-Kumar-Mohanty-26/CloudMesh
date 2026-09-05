@@ -30,11 +30,9 @@ function toVectorLiteral(embedding: number[]): string {
 }
 
 /**
- * Exact-hash hit first (cheap, no embedding compute needed by the caller for
- * this path — though the caller still had to embed for the fallback), then
- * cosine similarity via pgvector, both scoped by org_id AND model ("org_id
- * is a WHERE clause, not a suggestion" — see notes/cloudmesh.html's Phase 6
- * design). RLS is the backstop; the explicit org_id predicate here is also
+ * Exact-hash hit first, then cosine similarity via pgvector, both scoped
+ * by org_id AND model ("org_id is a WHERE clause, not a suggestion" — see
+ * notes/cloudmesh.html's Phase 6 design). RLS is the backstop; the explicit org_id predicate here is also
  * what lets the query planner actually use the (org_id, model) index instead
  * of relying solely on the invisible RLS policy predicate.
  */
@@ -43,7 +41,10 @@ export async function lookupCache(
   orgId: string,
   model: string,
   promptHash: string,
-  embedding: number[],
+  /** Pass a thunk to skip the embedding call entirely on an exact-hash hit
+   *  — it is only needed for the pgvector fallback below. Callers that
+   *  already hold a vector can still pass it directly. */
+  embedding: number[] | (() => Promise<number[]>),
   opts: SemanticCacheLookupOptions,
 ): Promise<string | null> {
   return withTenant(db, orgId, async (tx) => {
@@ -56,7 +57,9 @@ export async function lookupCache(
     `;
     if (exact[0]) return exact[0].response;
 
-    const vectorLiteral = toVectorLiteral(embedding);
+    const vectorLiteral = toVectorLiteral(
+      typeof embedding === "function" ? await embedding() : embedding,
+    );
     const semantic = await tx.$queryRaw<Array<{ response: string; similarity: number }>>`
       SELECT response, 1 - (embedding <=> ${vectorLiteral}::vector) AS similarity
       FROM semantic_cache

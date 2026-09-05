@@ -10,6 +10,11 @@ export const MAX_JOB_ATTEMPTS = 3;
 
 export interface CreateJobInput {
   orgId: string;
+  /** The submitting key, so the worker can bill this job's provider calls
+   *  minutes later. Optional only so non-HTTP callers (tests, future
+   *  internal schedulers) aren't forced to invent one — an unbilled job is
+   *  the documented consequence of omitting it. */
+  apiKeyId?: string | null;
   type: string;
   payload: unknown;
   priority?: unknown;
@@ -44,6 +49,7 @@ export async function createJob(
     tx.job.create({
       data: {
         orgId: input.orgId,
+        apiKeyId: input.apiKeyId ?? null,
         type: input.type,
         priority,
         payload: input.payload as never,

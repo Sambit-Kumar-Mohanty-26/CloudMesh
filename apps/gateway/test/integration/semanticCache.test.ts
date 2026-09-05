@@ -105,6 +105,27 @@ describe("semantic cache", () => {
     expect(result).toBe("cached response");
   });
 
+  it("never computes the embedding when the exact hash hits", async () => {
+    const orgId = await createOrg("Cache Org");
+    const hash = computePromptHash("gpt-4o", [{ role: "user", content: "explain JWT" }]);
+    await storeCache(db, orgId, "gpt-4o", hash, A, "cached response");
+
+    // A thunk that throws if called: an embedding is a paid API call, and
+    // a literal repeat must not pay for a vector the exact-hash lookup
+    // already made unnecessary. Passing a plain array here would prove
+    // nothing — the point is that the thunk is never invoked.
+    let embedCalls = 0;
+    const embed = () => {
+      embedCalls++;
+      throw new Error("embedding computed on an exact-hash hit");
+    };
+
+    await expect(lookupCache(db, orgId, "gpt-4o", hash, embed, OPTS)).resolves.toBe(
+      "cached response",
+    );
+    expect(embedCalls).toBe(0);
+  });
+
   it("excludes entries older than the TTL window", async () => {
     const orgId = await createOrg("Cache Org");
     await storeCache(db, orgId, "gpt-4o", "hash-a", A, "stale response");
