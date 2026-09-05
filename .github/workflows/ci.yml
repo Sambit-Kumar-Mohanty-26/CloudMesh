@@ -162,7 +162,7 @@ jobs:
       # it needs its own setup step. Zero runtime dependencies (built on
       # urllib), so only pytest is installed; its tests run against a real
       # http.server on loopback rather than a mocked transport.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install pytest
